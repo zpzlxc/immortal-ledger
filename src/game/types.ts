@@ -1,4 +1,4 @@
-export type ActionType = 'meditate' | 'temper' | 'insight' | 'overdrive' | 'explore' | 'study' | 'sect_mission';
+export type ActionType = 'meditate' | 'temper' | 'insight' | 'overdrive' | 'explore' | 'study' | 'sect_mission' | 'breakthrough' | 'foundation_trial';
 
 export type ExplorationLocationId = 'qingstone-mountain' | 'blackwind-valley' | 'nameless-well';
 
@@ -111,6 +111,15 @@ export type CurrentAction = {
   missionId?: SectMissionId;
 };
 
+export type InjurySource = 'overdrive' | 'exploration' | 'sect_mission';
+
+export type InjuryState = {
+  severity: 1 | 2 | 3;
+  recoveryPoints: number;
+  source: InjurySource;
+  startedAt: number;
+};
+
 export type Character = {
   id: string;
   name: string;
@@ -128,6 +137,8 @@ export type Character = {
   realm: Realm;
   talents: Talent[];
   currentAction: CurrentAction | null;
+  injury: InjuryState | null;
+  breakthroughCooldownUntil: number | null;
 };
 
 export type LifeStatus = 'alive' | 'dead';

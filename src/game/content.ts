@@ -98,10 +98,26 @@ export const ACTIONS: Record<
     description: '替宗门处理一件不大不小的差事，换取门中声望。',
     risk: '风险：视任务而定',
   },
+  breakthrough: {
+    label: '准备突破',
+    icon: '门',
+    durationMinutes: 30,
+    description: '耗费时间整理灵气与心境，准备正式叩击当前关隘。',
+    risk: '风险：失败后进入冷却',
+  },
+  foundation_trial: {
+    label: '筑基试炼',
+    icon: '峰',
+    durationMinutes: 45,
+    description: '前往筑基修士才能踏入的试炼场，寻找更高阶的功法残页与灵石。',
+    risk: '风险：耗时较长，收获更丰厚',
+  },
 };
 
 export const REAL_MINUTE_TO_GAME_DAYS = 0.5;
 export const MAX_OFFLINE_MINUTES = 8 * 60;
+export const BREAKTHROUGH_COST_SPIRIT_STONES = 10;
+export const BREAKTHROUGH_FAILURE_COOLDOWN_MINUTES = 60;
 export const SAVE_KEY = 'immortal-ledger-save-v1';
 
 export const formatRealm = (major: string, stage: number) => {

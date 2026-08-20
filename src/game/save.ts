@@ -1,6 +1,7 @@
 import { SAVE_KEY, TALENTS } from './content';
 import { createCave } from './cave';
 import { EXPLORATION_EVENTS } from './exploration';
+import { normalizeInjury } from './injury';
 import { createSocialState, PERSON_EVENTS, RELATIONSHIPS, SECTS, getRelationshipStatus } from './people';
 import {
   createCultivationPath,
@@ -129,7 +130,7 @@ export const createNewGame = (
     );
 
   return {
-    schemaVersion: 7,
+    schemaVersion: 9,
     lifeStatus: 'alive',
     lifeSummary: null,
     pastLives: pastLives
@@ -160,6 +161,8 @@ export const createNewGame = (
       },
       talents: selectedTalents,
       currentAction: null,
+      injury: null,
+      breakthroughCooldownUntil: null,
     },
     inventory: {
       spiritStones: 30,
@@ -195,12 +198,17 @@ export const normalizeGameState = (input: GameState): GameState => {
   if (state.lifeStatus === 'dead') {
     state.character.currentAction = null;
   }
+  state.character.injury = normalizeInjury(input.character.injury);
+  const breakthroughCooldownUntil = Number(input.character.breakthroughCooldownUntil);
+  state.character.breakthroughCooldownUntil = Number.isFinite(breakthroughCooldownUntil) && breakthroughCooldownUntil > 0
+    ? breakthroughCooldownUntil
+    : null;
   const legacyCave = input.cave;
   const shouldUnlockCave = Boolean(legacyCave?.unlocked || hasCompletedExploration(state));
   const initialCave = createCave(now, shouldUnlockCave);
   const cave = legacyCave ?? initialCave;
 
-  state.schemaVersion = Math.max(7, Number(state.schemaVersion) || 1);
+  state.schemaVersion = Math.max(9, Number(state.schemaVersion) || 1);
   state.cave = {
     ...initialCave,
     ...cave,

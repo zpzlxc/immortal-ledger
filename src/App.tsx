@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   ACTIONS,
+  BREAKTHROUGH_COST_SPIRIT_STONES,
   formatAge,
   formatRealm,
   formatRemaining,
@@ -15,6 +16,8 @@ import {
   getUpgradeCost,
 } from './game/cave';
 import { EXPLORATION_LOCATIONS, getExplorationEvent } from './game/exploration';
+import { getInjuryLabel, getInjurySourceLabel } from './game/injury';
+import { getOfflineSummary, type OfflineSummary } from './game/offline';
 import {
   getPersonEvent,
   getSectEffects,
@@ -58,14 +61,16 @@ import {
   collectCave,
   chooseCultivationSchool,
   exchangeSectReputation,
+  getBreakthroughStartError,
   joinSect,
   researchTechniqueBranch,
   resolveExplorationEvent,
   resolvePersonEvent,
   settleGame,
+  startBreakthrough,
   startSectMission,
   startAction,
-  tryBreakthrough,
+  treatInjury,
   upgradeCaveBuilding,
 } from './game/settlement';
 
@@ -80,20 +85,58 @@ const categoryLabel: Record<LedgerEntry['category'], string> = {
   death: '终章',
 };
 
+type InitialSession = {
+  game: GameState | null;
+  offlineSummary: OfflineSummary | null;
+};
+
+const getInitialSession = (): InitialSession => {
+  const saved = loadGame();
+  if (!saved) return { game: null, offlineSummary: null };
+  const now = Date.now();
+  const settled = settleGame(saved, now);
+  saveGame(settled.state);
+  return {
+    game: settled.state,
+    offlineSummary: getOfflineSummary(saved, settled.state, now),
+  };
+};
+
+const getNextStepSuggestion = (state: GameState) => {
+  if (state.lifeStatus === 'dead') return '这一世已经写到终章。';
+  if (state.social.pendingPersonEvent) return '人物事件正在等你回应，先去人物页落下这一笔。';
+  if (state.pendingExplorationEvent) return '探索带回了一道岔路，先去探索页选择你要留下的方向。';
+  if (state.character.currentAction) return `「${ACTIONS[state.character.currentAction.type].label}」仍在进行，等它完成后再安排下一步。`;
+  if (state.character.realm.major === 'foundation_establishment') return '筑基之后，修炼页已经出现新的筑基试炼，可以去云外峰场寻找更高阶的机缘。';
+  if (state.cave.stored.cultivation > 0 || state.cave.stored.herbs > 0) return '洞府里还有待收产出，可以先去洞府收好这一笔家底。';
+  if (state.character.realm.cultivation >= state.character.realm.cultivationRequired) return '修为已经触及瓶颈，可以先夯实根基，再决定是否尝试突破。';
+  return '长生簿已经替你记下这一段时间，现在可以安排下一项行动。';
+};
+
+const formatOfflineDuration = (minutes: number) => {
+  if (minutes < 60) return `${minutes} 分钟`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes > 0 ? `${hours} 小时 ${remainingMinutes} 分钟` : `${hours} 小时`;
+};
+
+const formatSignedValue = (value: number) => `${value > 0 ? '+' : ''}${value}`;
+
 const App = () => {
-  const [game, setGame] = useState<GameState | null>(() => {
-    const saved = loadGame();
-    if (!saved) return null;
-    const settled = settleGame(saved);
-    saveGame(settled.state);
-    return settled.state;
-  });
+  const [initialSession] = useState<InitialSession>(() => getInitialSession());
+  const [game, setGame] = useState<GameState | null>(() => initialSession.game);
+  const [offlineSummary, setOfflineSummary] = useState<OfflineSummary | null>(() => initialSession.offlineSummary);
   const [now, setNow] = useState(Date.now());
   const [notice, setNotice] = useState<LedgerEntry[]>([]);
   const [activeTab, setActiveTab] = useState<'ledger' | 'cultivation' | 'technique' | 'exploration' | 'people' | 'cave' | 'codex'>('ledger');
   const [selectedExplorationLocationId, setSelectedExplorationLocationId] = useState<ExplorationLocationId>('qingstone-mountain');
   const [errorMessage, setErrorMessage] = useState('');
   const importInput = useRef<HTMLInputElement>(null);
+
+  const captureOfflineSummary = (before: GameState, after: GameState, settledAt: number) => {
+    const summary = getOfflineSummary(before, after, settledAt);
+    if (summary) setOfflineSummary(summary);
+  };
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -102,15 +145,34 @@ const App = () => {
       setGame((previous) => {
         if (!previous) return previous;
         const settled = settleGame(previous, current);
+        captureOfflineSummary(previous, settled.state, current);
         if (settled.newEntries.length > 0) {
           setNotice(settled.newEntries);
+          saveGame(settled.state);
         }
-        saveGame(settled.state);
         return settled.state;
       });
     }, 1_000);
 
     return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const persistWhenHidden = () => {
+      if (document.visibilityState !== 'hidden') return;
+      setGame((previous) => {
+        if (!previous) return previous;
+        const current = Date.now();
+        const settled = settleGame(previous, current);
+        captureOfflineSummary(previous, settled.state, current);
+        saveGame(settled.state);
+        if (settled.newEntries.length > 0) setNotice(settled.newEntries);
+        return settled.state;
+      });
+    };
+
+    document.addEventListener('visibilitychange', persistWhenHidden);
+    return () => document.removeEventListener('visibilitychange', persistWhenHidden);
   }, []);
 
   useEffect(() => {
@@ -123,6 +185,7 @@ const App = () => {
     const next = createNewGame(name, [talent.id]);
     saveGame(next);
     setGame(next);
+    setOfflineSummary(null);
   };
 
   const handleNextLife = (name: string, talent: Talent) => {
@@ -130,6 +193,7 @@ const App = () => {
     const next = startNextLife(game, name, [talent.id], Date.now());
     saveGame(next);
     setGame(next);
+    setOfflineSummary(null);
     setNotice(next.ledger.slice(0, 1));
     setErrorMessage('');
   };
@@ -141,11 +205,13 @@ const App = () => {
       return;
     }
     setErrorMessage('');
-    const settled = settleGame(game, Date.now());
+    const settledAt = Date.now();
+    const settled = settleGame(game, settledAt);
+    captureOfflineSummary(game, settled.state, settledAt);
     const next = startAction(
       settled.state,
       type,
-      Date.now(),
+      settledAt,
       locationId ?? selectedExplorationLocationId,
     );
     saveGame(next);
@@ -156,11 +222,16 @@ const App = () => {
   const handleBreakthrough = () => {
     if (!game) return;
     setErrorMessage('');
-    const settled = settleGame(game, Date.now());
-    const result = tryBreakthrough(settled.state);
+    const settledAt = Date.now();
+    const settled = settleGame(game, settledAt);
+    captureOfflineSummary(game, settled.state, settledAt);
+    const result = startBreakthrough(settled.state, settledAt);
     saveGame(result.state);
     setGame(result.state);
-    setNotice([...settled.newEntries, ...result.newEntries]);
+    setErrorMessage(result.error ?? '');
+    if (settled.newEntries.length > 0 || result.newEntries.length > 0) {
+      setNotice([...settled.newEntries, ...result.newEntries]);
+    }
   };
 
   const handleChooseSchool = (schoolId: CultivationSchoolId) => {
@@ -183,8 +254,10 @@ const App = () => {
 
   const handleResolvePersonEvent = (choiceId: string) => {
     if (!game) return;
-    const settled = settleGame(game, Date.now());
-    const result = resolvePersonEvent(settled.state, choiceId, Date.now());
+    const settledAt = Date.now();
+    const settled = settleGame(game, settledAt);
+    captureOfflineSummary(game, settled.state, settledAt);
+    const result = resolvePersonEvent(settled.state, choiceId, settledAt);
     saveGame(result.state);
     setGame(result.state);
     setErrorMessage(result.error ?? '');
@@ -193,8 +266,10 @@ const App = () => {
 
   const handleResolveExplorationEvent = (choiceId: string) => {
     if (!game) return;
-    const settled = settleGame(game, Date.now());
-    const result = resolveExplorationEvent(settled.state, choiceId, Date.now());
+    const settledAt = Date.now();
+    const settled = settleGame(game, settledAt);
+    captureOfflineSummary(game, settled.state, settledAt);
+    const result = resolveExplorationEvent(settled.state, choiceId, settledAt);
     saveGame(result.state);
     setGame(result.state);
     setErrorMessage(result.error ?? '');
@@ -212,8 +287,10 @@ const App = () => {
 
   const handleStartSectMission = (missionId: SectMissionId) => {
     if (!game) return;
-    const settled = settleGame(game, Date.now());
-    const result = startSectMission(settled.state, missionId, Date.now());
+    const settledAt = Date.now();
+    const settled = settleGame(game, settledAt);
+    captureOfflineSummary(game, settled.state, settledAt);
+    const result = startSectMission(settled.state, missionId, settledAt);
     saveGame(result.state);
     setGame(result.state);
     setErrorMessage(result.error ?? '');
@@ -232,6 +309,15 @@ const App = () => {
   const handleCollectCave = () => {
     if (!game) return;
     const result = collectCave(game, Date.now());
+    saveGame(result.state);
+    setGame(result.state);
+    setErrorMessage(result.error ?? '');
+    if (result.newEntries.length > 0) setNotice(result.newEntries);
+  };
+
+  const handleTreatInjury = () => {
+    if (!game) return;
+    const result = treatInjury(game, Date.now());
     saveGame(result.state);
     setGame(result.state);
     setErrorMessage(result.error ?? '');
@@ -286,6 +372,7 @@ const App = () => {
       const imported = await parseSaveFile(file);
       saveGame(imported);
       setGame(imported);
+      setOfflineSummary(null);
       setErrorMessage('');
       setNotice([]);
     } catch (error) {
@@ -313,6 +400,40 @@ const App = () => {
     (game.character.realm.cultivation / game.character.realm.cultivationRequired) * 100,
   );
   const canBreakthrough = game.character.realm.cultivation >= game.character.realm.cultivationRequired;
+  const breakthroughError = canBreakthrough ? getBreakthroughStartError(game, now) : null;
+  const pendingLedgerEvent = game.social.pendingPersonEvent
+    ? (() => {
+      const event = getPersonEvent(game.social.pendingPersonEvent!.eventId);
+      return event
+        ? {
+          tab: 'people' as const,
+          eyebrow: event.eyebrow,
+          title: event.title,
+          summary: event.summary,
+          choiceCount: event.choices.length,
+        }
+        : null;
+    })()
+    : game.pendingExplorationEvent
+      ? (() => {
+        const event = getExplorationEvent(game.pendingExplorationEvent!.eventId);
+        return event
+          ? {
+            tab: 'exploration' as const,
+            eyebrow: event.eyebrow,
+            title: event.title,
+            summary: event.summary,
+            choiceCount: event.choices.length,
+          }
+          : null;
+      })()
+      : null;
+
+  const handleOpenPendingEvent = (tab: 'people' | 'exploration') => {
+    setActiveTab(tab);
+    setErrorMessage('');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
   return (
     <div className="app-shell">
@@ -358,6 +479,12 @@ const App = () => {
             <div className="character-name">{game.character.name}</div>
             <div className="realm-name">{formatRealm(game.character.realm.major, game.character.realm.stage)}</div>
             <div className="age-line">{formatAge(game.character.ageDays)} · 寿元余 {Math.max(0, Math.floor((game.character.lifespanDays - game.character.ageDays) / 365))} 年</div>
+            {game.character.injury && (
+              <div className={`injury-status severity-${game.character.injury.severity}`}>
+                <div><span>持续伤势</span><strong>{getInjuryLabel(game.character.injury)}</strong></div>
+                <small>{getInjurySourceLabel(game.character.injury.source)} · 还需调养 {game.character.injury.recoveryPoints} 点</small>
+              </div>
+            )}
 
             <div className="cultivation-progress">
               <div className="progress-label">
@@ -416,6 +543,11 @@ const App = () => {
               onReadAll={markAllRead}
               action={game.character.currentAction}
               now={now}
+              offlineSummary={offlineSummary}
+              nextStepSuggestion={getNextStepSuggestion(game)}
+              onDismissOfflineSummary={() => setOfflineSummary(null)}
+              pendingEvent={pendingLedgerEvent}
+              onOpenPendingEvent={handleOpenPendingEvent}
             />
           )}
       {activeTab === 'cultivation' && (
@@ -425,8 +557,11 @@ const App = () => {
               cave={game.cave}
               sectId={game.social.sect.sectId}
               attributes={game.character.attributes}
+              realm={game.character.realm}
+              injury={game.character.injury}
               cultivationPath={game.cultivationPath}
               canBreakthrough={canBreakthrough}
+              breakthroughError={breakthroughError}
               onStart={handleStartAction}
               onBreakthrough={handleBreakthrough}
             />
@@ -463,7 +598,9 @@ const App = () => {
               cave={game.cave}
               inventory={game.inventory}
               sectId={game.social.sect.sectId}
+              injury={game.character.injury}
               onCollect={handleCollectCave}
+              onTreat={handleTreatInjury}
               onUpgrade={handleUpgradeCaveBuilding}
             />
           )}
@@ -642,12 +779,25 @@ const TabButton = ({ active, label, icon, badge, onClick }: { active: boolean; l
   </button>
 );
 
-const LedgerView = ({ entries, onRead, onReadAll, action, now }: {
+type PendingLedgerEvent = {
+  tab: 'people' | 'exploration';
+  eyebrow: string;
+  title: string;
+  summary: string;
+  choiceCount: number;
+};
+
+const LedgerView = ({ entries, onRead, onReadAll, action, now, offlineSummary, nextStepSuggestion, onDismissOfflineSummary, pendingEvent, onOpenPendingEvent }: {
   entries: LedgerEntry[];
   onRead: (entryId: string) => void;
   onReadAll: () => void;
   action: GameState['character']['currentAction'];
   now: number;
+  offlineSummary: OfflineSummary | null;
+  nextStepSuggestion: string;
+  onDismissOfflineSummary: () => void;
+  pendingEvent: PendingLedgerEvent | null;
+  onOpenPendingEvent: (tab: PendingLedgerEvent['tab']) => void;
 }) => (
   <div className="view-stack">
     <section className="hero-panel">
@@ -659,6 +809,29 @@ const LedgerView = ({ entries, onRead, onReadAll, action, now }: {
       <div className="hero-ornament">☽</div>
     </section>
     <CurrentActionCard action={action} now={now} />
+    {offlineSummary && (
+      <OfflineSummaryCard
+        summary={offlineSummary}
+        nextStepSuggestion={nextStepSuggestion}
+        onDismiss={onDismissOfflineSummary}
+      />
+    )}
+    {pendingEvent && (
+      <section className="pending-event-card paper-card" aria-live="polite">
+        <div className="pending-event-copy">
+          <div className="pending-event-top">
+            <span className="eyebrow">{pendingEvent.tab === 'people' ? 'A PERSON AWAITS · 人物待回应' : 'A CHOICE AWAITS · 探索待抉择'}</span>
+            <span className="pending-event-count">{pendingEvent.choiceCount} 个选择</span>
+          </div>
+          <h3>{pendingEvent.title}</h3>
+          <p>{pendingEvent.summary}</p>
+          <small>{pendingEvent.eyebrow}</small>
+        </div>
+        <button className="primary-button" onClick={() => onOpenPendingEvent(pendingEvent.tab)}>
+          前往处理 <span>→</span>
+        </button>
+      </section>
+    )}
     <div className="section-heading ledger-heading">
       <div><span>最近记录</span><small>按时间倒序排列</small></div>
       <button className="text-button" onClick={onReadAll}>全部标为已读</button>
@@ -678,6 +851,50 @@ const LedgerView = ({ entries, onRead, onReadAll, action, now }: {
     </div>
   </div>
 );
+
+const OfflineSummaryCard = ({ summary, nextStepSuggestion, onDismiss }: {
+  summary: OfflineSummary;
+  nextStepSuggestion: string;
+  onDismiss: () => void;
+}) => {
+  const resourceChanges = [
+    { label: '修为', value: summary.resourceChanges.cultivation },
+    { label: '灵石', value: summary.resourceChanges.spiritStones },
+    { label: '灵草', value: summary.resourceChanges.herbs },
+    { label: '功法残页', value: summary.resourceChanges.techniqueFragments },
+  ].filter(({ value }) => value !== 0);
+  const caveProduction = [
+    summary.caveProduction.cultivation > 0 ? `修为 +${summary.caveProduction.cultivation}` : '',
+    summary.caveProduction.herbs > 0 ? `灵草 +${summary.caveProduction.herbs}` : '',
+  ].filter(Boolean).join(' · ');
+
+  return (
+    <section className="offline-summary-card paper-card" aria-live="polite">
+      <div className="offline-summary-main">
+        <div className="offline-summary-heading">
+          <div>
+            <div className="eyebrow">BACK FROM THE ROAD · 离线回报</div>
+            <h3>你离开期间，长生簿替你记下了这些。</h3>
+          </div>
+          {summary.capped && <span className="offline-summary-cap">按 8 小时上限结算</span>}
+        </div>
+        <div className="offline-summary-grid">
+          <div><span>离线时长</span><strong>{formatOfflineDuration(summary.elapsedMinutes)}</strong></div>
+          <div><span>完成行动</span><strong>{summary.completedAction ? ACTIONS[summary.completedAction].label : '洞府自理'}</strong></div>
+          <div><span>洞府产出</span><strong>{caveProduction || '暂无'}</strong></div>
+        </div>
+        {resourceChanges.length > 0 && (
+          <div className="offline-change-list">
+            <span>随身变化</span>
+            {resourceChanges.map(({ label, value }) => <strong key={label}>{label} {formatSignedValue(value)}</strong>)}
+          </div>
+        )}
+        <div className="offline-next-step"><span>下一步</span><p>{nextStepSuggestion}</p></div>
+      </div>
+      <button className="banner-close" aria-label="关闭离线总结" onClick={onDismiss}>×</button>
+    </section>
+  );
+};
 
 const CurrentActionCard = ({ action, now }: { action: GameState['character']['currentAction']; now: number }) => {
   if (!action) {
@@ -708,19 +925,23 @@ const CurrentActionCard = ({ action, now }: { action: GameState['character']['cu
 type ActionOptionProps = {
   type: ActionType;
   currentAction: GameState['character']['currentAction'];
+  injury?: GameState['character']['injury'];
   cave: GameState['cave'];
   sectId: SectId | null;
   selectedLocationId?: ExplorationLocationId;
   onStart: (type: ActionType, locationId?: ExplorationLocationId) => void;
 };
 
-const ActionOption = ({ type, currentAction, cave, sectId, selectedLocationId, onStart }: ActionOptionProps) => {
-  const disabled = Boolean(currentAction);
+const ActionOption = ({ type, currentAction, injury, cave, sectId, selectedLocationId, onStart }: ActionOptionProps) => {
+  const injuryBlocked = type === 'overdrive' && Boolean(injury && injury.severity >= 3);
+  const disabled = Boolean(currentAction) || injuryBlocked;
   const action = ACTIONS[type];
   const locationId = selectedLocationId ?? 'qingstone-mountain';
   const explorationLocation = type === 'explore' ? EXPLORATION_LOCATIONS[locationId] : null;
   const durationMinutes = getActionDurationMinutes(type, cave, locationId, sectId);
-  const detail = explorationLocation
+  const detail = injuryBlocked
+    ? '重伤未愈 · 先用平稳功课、淬体或洞府灵草调养'
+    : explorationLocation
     ? explorationLocation.risk
     : type === 'study' && durationMinutes < action.durationMinutes
       ? `${action.risk} · 藏经阁已缩短时间`
@@ -742,7 +963,7 @@ const ActionOption = ({ type, currentAction, cave, sectId, selectedLocationId, o
         disabled={disabled}
         onClick={() => onStart(type, type === 'explore' ? locationId : undefined)}
       >
-        {disabled ? '行动中' : '安排'}
+        {injuryBlocked ? '伤势未愈' : disabled ? '行动中' : '安排'}
       </button>
     </article>
   );
@@ -755,8 +976,9 @@ const CULTIVATION_NOTES = [
   '功法不是替你做决定的答案，而是一盏灯：最后要走哪条路，仍然要由你落脚。',
 ];
 
-const CultivationPulse = ({ attributes, cultivationPath, currentAction, canBreakthrough }: {
+const CultivationPulse = ({ attributes, injury, cultivationPath, currentAction, canBreakthrough }: {
   attributes: GameState['character']['attributes'];
+  injury: GameState['character']['injury'];
   cultivationPath: GameState['cultivationPath'];
   currentAction: GameState['character']['currentAction'];
   canBreakthrough: boolean;
@@ -768,7 +990,9 @@ const CultivationPulse = ({ attributes, cultivationPath, currentAction, canBreak
       ? { label: '心境可用', detail: '可以稳步修炼，也可以小试险招。' }
       : { label: '心境清明', detail: '灵气与念头都在较好的位置。' };
   const technique = getActiveTechnique(cultivationPath);
-  const advice = currentAction
+  const advice = injury
+    ? { title: injury.severity >= 3 ? '先疗伤，再谈险招' : '伤势正在恢复', body: `当前伤势还需调养 ${injury.recoveryPoints} 点。平稳吐纳、静观参悟和淬体都能帮助恢复，极限运功会让伤势继续恶化。` }
+    : currentAction
     ? { title: `专心完成「${ACTIONS[currentAction.type].label}」`, body: '一次只做一件事。等这段功课结束，长生簿会把真正的变化记下来。' }
     : canBreakthrough
       ? { title: '关隘已在眼前', body: '修为已经触及瓶颈，可以先用淬体或参悟稳住状态，再决定是否叩关。' }
@@ -804,14 +1028,17 @@ const CultivationPulse = ({ attributes, cultivationPath, currentAction, canBreak
   );
 };
 
-const CultivationView = ({ currentAction, now, cave, sectId, attributes, cultivationPath, canBreakthrough, onStart, onBreakthrough }: {
+const CultivationView = ({ currentAction, now, cave, sectId, attributes, realm, injury, cultivationPath, canBreakthrough, breakthroughError, onStart, onBreakthrough }: {
   currentAction: GameState['character']['currentAction'];
   now: number;
   cave: GameState['cave'];
   sectId: SectId | null;
   attributes: GameState['character']['attributes'];
+  realm: GameState['character']['realm'];
+  injury: GameState['character']['injury'];
   cultivationPath: GameState['cultivationPath'];
   canBreakthrough: boolean;
+  breakthroughError: string | null;
   onStart: (type: ActionType, locationId?: ExplorationLocationId) => void;
   onBreakthrough: () => void;
 }) => (
@@ -820,12 +1047,22 @@ const CultivationView = ({ currentAction, now, cave, sectId, attributes, cultiva
       <div><div className="eyebrow">THE DAILY PRACTICE · 日常功课</div><h2>修炼</h2><p>从吐纳、淬体、参悟到险行，按身体和心境选择今天的功课。</p></div>
       <div className="heading-stamp">静心</div>
     </section>
-    <CultivationPulse attributes={attributes} cultivationPath={cultivationPath} currentAction={currentAction} canBreakthrough={canBreakthrough} />
+    <CultivationPulse attributes={attributes} injury={injury} cultivationPath={cultivationPath} currentAction={currentAction} canBreakthrough={canBreakthrough} />
     {currentAction && <CurrentActionCard action={currentAction} now={now} />}
     {canBreakthrough && (
       <section className="breakthrough-card">
-        <div><span className="eyebrow">A GATE AWAITS · 关隘已至</span><h3>你的修为已经触及当前瓶颈。</h3><p>继续修炼可以夯实根基，也可以现在尝试突破。</p></div>
-        <button className="primary-button" onClick={onBreakthrough}>尝试突破</button>
+        <div><span className="eyebrow">A GATE AWAITS · 关隘已至</span><h3>你的修为已经触及当前瓶颈。</h3><p>准备突破需耗时 {ACTIONS.breakthrough.durationMinutes} 分钟，消耗 {BREAKTHROUGH_COST_SPIRIT_STONES} 枚灵石。{breakthroughError ?? '准备完成后才会真正叩击关隘，失败会进入冷却。'}</p></div>
+        <button className="primary-button" disabled={Boolean(breakthroughError)} onClick={onBreakthrough}>{breakthroughError ? '暂不可突破' : '开始准备突破'}</button>
+      </section>
+    )}
+    {realm.major === 'foundation_establishment' && (
+      <section className="foundation-trial-section paper-card">
+        <div className="section-intro">
+          <div><span className="eyebrow">BEYOND THE QI REFINING PATH · 筑基新途</span><h3>云外峰场</h3></div>
+          <span>筑基后开放</span>
+        </div>
+        <p className="foundation-trial-copy">旧日的山河已经不够容纳你的脚步。去筑基修士才能踏入的试炼场，寻找更高阶的功法残页与灵石。</p>
+        <ActionOption type="foundation_trial" currentAction={currentAction} injury={injury} cave={cave} sectId={sectId} onStart={onStart} />
       </section>
     )}
     <section className="action-section">
@@ -834,10 +1071,10 @@ const CultivationView = ({ currentAction, now, cave, sectId, attributes, cultiva
         <span>一次只能安排一项行动 · 不同功课会改变不同底子</span>
       </div>
       <div className="action-grid practice-action-grid">
-        <ActionOption type="meditate" currentAction={currentAction} cave={cave} sectId={sectId} onStart={onStart} />
-        <ActionOption type="temper" currentAction={currentAction} cave={cave} sectId={sectId} onStart={onStart} />
-        <ActionOption type="insight" currentAction={currentAction} cave={cave} sectId={sectId} onStart={onStart} />
-        <ActionOption type="overdrive" currentAction={currentAction} cave={cave} sectId={sectId} onStart={onStart} />
+        <ActionOption type="meditate" currentAction={currentAction} injury={injury} cave={cave} sectId={sectId} onStart={onStart} />
+        <ActionOption type="temper" currentAction={currentAction} injury={injury} cave={cave} sectId={sectId} onStart={onStart} />
+        <ActionOption type="insight" currentAction={currentAction} injury={injury} cave={cave} sectId={sectId} onStart={onStart} />
+        <ActionOption type="overdrive" currentAction={currentAction} injury={injury} cave={cave} sectId={sectId} onStart={onStart} />
       </div>
     </section>
     {currentAction && <div className="hint-note">当前行动还剩 {formatRemaining(currentAction.endsAt, now)}。你可以关闭网页，回来时查看长生簿。</div>}
@@ -1188,11 +1425,13 @@ const PeopleView = ({ social, currentAction, onResolveEvent, onJoinSect, onStart
   );
 };
 
-const CaveView = ({ cave, inventory, sectId, onCollect, onUpgrade }: {
+const CaveView = ({ cave, inventory, sectId, injury, onCollect, onTreat, onUpgrade }: {
   cave: GameState['cave'];
   inventory: GameState['inventory'];
   sectId: SectId | null;
+  injury: GameState['character']['injury'];
   onCollect: () => void;
+  onTreat: () => void;
   onUpgrade: (buildingId: CaveBuildingId) => void;
 }) => {
   if (!cave.unlocked) {
@@ -1225,6 +1464,18 @@ const CaveView = ({ cave, inventory, sectId, onCollect, onUpgrade }: {
       <div className="cave-effect-note hint-note">
         当前效果：聚灵阵每小时积攒 {effects.cultivationPerHour} 点修为，灵田每小时产出 {effects.herbsPerHour} 株灵草；研读残卷需 {studyDuration} 分钟。
       </div>
+      {injury && (
+        <section className="injury-treatment-panel paper-card">
+          <div>
+            <div className="eyebrow">HEALING BY LANTERN · 洞府疗伤</div>
+            <h3>{getInjuryLabel(injury)}</h3>
+            <p>把灵草熬成药汤，在洞府的安静灵气里调养经脉。当前还需恢复 {injury.recoveryPoints} 点。</p>
+          </div>
+          <button className="primary-button" disabled={inventory.herbs < 2} onClick={onTreat}>
+            {inventory.herbs >= 2 ? '灵草疗伤 · 2' : '灵草不足'}
+          </button>
+        </section>
+      )}
       <div className="building-grid">
         {(Object.keys(CAVE_BUILDINGS) as CaveBuildingId[]).map((buildingId) => {
           const building = cave.buildings[buildingId];

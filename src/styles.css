@@ -53,6 +53,12 @@ button:disabled { cursor: not-allowed; }
 .character-name { font-size: 30px; margin-top: 14px; letter-spacing: 3px; }
 .realm-name { color: var(--red); margin-top: 5px; font-size: 16px; }
 .age-line { color: var(--muted); font-size: 12px; margin-top: 6px; }
+.injury-status { margin-top: 13px; padding: 9px 10px; background: #f6e4df; border: 1px solid #e3bdb4; }
+.injury-status > div { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.injury-status span { color: #a95f52; font-size: 9px; }
+.injury-status strong { color: var(--red); font-size: 11px; font-weight: 600; }
+.injury-status small { display: block; color: #a95f52; font-size: 9px; line-height: 1.5; margin-top: 4px; }
+.injury-status.severity-3 { background: #efd8d2; border-color: #d89e93; }
 .cultivation-progress { margin-top: 26px; }
 .progress-label { justify-content: space-between; color: var(--muted); font-size: 11px; margin-bottom: 7px; }
 .progress-track { height: 5px; background: #e3d8c8; overflow: hidden; border-radius: 99px; }
@@ -110,6 +116,29 @@ button:disabled { cursor: not-allowed; }
 .settlement-banner strong { font-size: 13px; font-weight: 600; }
 .settlement-banner span { color: #8b7555; font-size: 11px; margin-top: 4px; }
 .banner-close { position: absolute; right: 12px; top: 9px; border: 0; background: transparent; color: #ae9164; font-size: 18px; }
+.pending-event-card { display: flex; align-items: center; justify-content: space-between; gap: 22px; padding: 19px 22px; background: #f5ead1; border: 1px solid #e5ce9e; }
+.pending-event-copy { min-width: 0; }
+.pending-event-top { display: flex; align-items: center; justify-content: space-between; gap: 15px; }
+.pending-event-count { color: #8b7555; font: 10px Arial, sans-serif; white-space: nowrap; }
+.pending-event-card h3 { font-size: 17px; font-weight: 600; margin: 8px 0 5px; }
+.pending-event-card p { color: #8b7555; font-size: 11px; line-height: 1.7; margin: 0; }
+.pending-event-card small { display: block; color: #a18c70; font-size: 9px; margin-top: 8px; }
+.pending-event-card .primary-button { flex: 0 0 auto; }
+.primary-button span { margin-left: 8px; font-family: Arial, sans-serif; }
+.offline-summary-card { position: relative; padding: 20px 48px 18px 22px; background: #edf0e7; border: 1px solid #d3dbc8; }
+.offline-summary-main { min-width: 0; }
+.offline-summary-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.offline-summary-heading h3 { color: #53634b; font-size: 16px; font-weight: 600; margin: 8px 0 0; }
+.offline-summary-cap { color: #6f7965; font: 10px Arial, sans-serif; padding-top: 4px; white-space: nowrap; }
+.offline-summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 17px; }
+.offline-summary-grid div { display: flex; flex-direction: column; gap: 5px; min-width: 0; padding: 11px 12px; background: rgba(255,255,255,.38); border: 1px solid rgba(113,128,92,.16); }
+.offline-summary-grid span { color: #6f7965; font-size: 10px; }
+.offline-summary-grid strong { color: #53634b; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.offline-change-list { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 12px; color: #6f7965; font-size: 10px; }
+.offline-change-list strong { color: #53634b; background: rgba(255,255,255,.42); padding: 4px 7px; font-size: 10px; font-weight: 500; }
+.offline-next-step { display: flex; align-items: baseline; gap: 10px; margin-top: 13px; padding-top: 11px; border-top: 1px solid rgba(113,128,92,.18); }
+.offline-next-step > span { color: var(--green); font: 9px Arial, sans-serif; letter-spacing: 1px; white-space: nowrap; }
+.offline-next-step p { color: #6f7965; font-size: 10px; line-height: 1.6; margin: 0; }
 .ledger-heading { margin-top: 6px; border-bottom: 1px solid var(--line); padding-bottom: 11px; }
 .ledger-heading > div span { font-size: 15px; }
 .ledger-heading small { font-size: 11px; color: var(--muted); margin-left: 10px; }
@@ -135,6 +164,11 @@ button:disabled { cursor: not-allowed; }
 .breakthrough-card { padding: 21px 23px; display: flex; align-items: center; justify-content: space-between; gap: 20px; background: #f5ead1; border: 1px solid #e5ce9e; }
 .breakthrough-card h3 { font-size: 15px; font-weight: 600; margin: 7px 0 5px; }
 .breakthrough-card p { color: #8b7555; font-size: 12px; margin: 0; }
+.foundation-trial-section { padding: 20px 22px; background: #edf0e7; border-color: #cbd7c1; }
+.foundation-trial-section .section-intro { margin-bottom: 8px; }
+.foundation-trial-section .section-intro > span { color: var(--green); }
+.foundation-trial-copy { color: #65725e; font-size: 11px; line-height: 1.7; margin: 0 0 13px; }
+.foundation-trial-section .action-option { background: rgba(248,242,232,.62); border-color: rgba(99,125,88,.2); }
 .action-section, .technique-study-card, .exploration-action-card { padding: 20px; }
 .action-section { background: var(--paper); border: 1px solid rgba(142,111,70,.15); }
 .cultivation-pulse { padding: 20px; }
@@ -307,6 +341,10 @@ button:disabled { cursor: not-allowed; }
 .cave-stored-grid span { color: var(--muted); font-size: 10px; white-space: nowrap; }
 .cave-stored-grid strong { color: var(--red); font-size: 22px; font-weight: 500; }
 .cave-effect-note { line-height: 1.7; }
+.injury-treatment-panel { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 20px 22px; background: #f6e4df; border-color: #e3bdb4; }
+.injury-treatment-panel h3 { color: var(--red); font-size: 16px; font-weight: 600; margin: 7px 0 5px; }
+.injury-treatment-panel p { color: #8d675f; font-size: 11px; line-height: 1.7; margin: 0; }
+.injury-treatment-panel .primary-button { flex: 0 0 auto; }
 .building-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
 .building-card { padding: 19px; min-width: 0; }
 .building-card-top { display: flex; align-items: center; gap: 12px; }
@@ -413,6 +451,7 @@ button:disabled { cursor: not-allowed; }
   .section-intro > span { padding-top: 0; text-align: left; }
   .cultivation-pulse-heading { flex-direction: column; gap: 11px; }
   .cultivation-pulse-grid { grid-template-columns: 1fr; }
+  .offline-summary-grid { grid-template-columns: 1fr; }
   .pulse-status { align-self: flex-start; }
   .cultivation-advice { flex-direction: column; gap: 6px; }
   .action-grid { grid-template-columns: 1fr; }
@@ -425,6 +464,14 @@ button:disabled { cursor: not-allowed; }
   .building-grid { grid-template-columns: 1fr; }
   .breakthrough-card { align-items: flex-start; flex-direction: column; }
   .breakthrough-card .primary-button { width: 100%; }
+  .foundation-trial-section .action-option { flex-direction: column; }
+  .foundation-trial-section .action-option > .secondary-button { align-self: stretch; width: 100%; }
+  .injury-treatment-panel { align-items: flex-start; flex-direction: column; }
+  .injury-treatment-panel .primary-button { width: 100%; }
+  .pending-event-card { align-items: flex-start; flex-direction: column; }
+  .pending-event-card .primary-button { width: 100%; }
+  .offline-summary-heading { flex-direction: column; gap: 7px; }
+  .offline-summary-cap { padding-top: 0; }
   .locked-feature { align-items: flex-start; padding: 20px; }
   .coming-soon { display: none; }
   .onboarding-card { padding: 35px 25px 28px; }

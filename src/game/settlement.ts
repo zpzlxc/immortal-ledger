@@ -1,4 +1,10 @@
-import { ACTIONS, MAX_OFFLINE_MINUTES, REAL_MINUTE_TO_GAME_DAYS } from './content';
+import {
+  ACTIONS,
+  BREAKTHROUGH_COST_SPIRIT_STONES,
+  BREAKTHROUGH_FAILURE_COOLDOWN_MINUTES,
+  MAX_OFFLINE_MINUTES,
+  REAL_MINUTE_TO_GAME_DAYS,
+} from './content';
 import {
   CAVE_BUILDINGS,
   createCave,
@@ -13,6 +19,12 @@ import {
   getExplorationEventsForLocation,
   getExplorationLocation,
 } from './exploration';
+import {
+  addInjury,
+  getInjuryEffects,
+  getInjuryLabel,
+  recoverInjury,
+} from './injury';
 import {
   createSocialState,
   getPersonEvent,
@@ -52,6 +64,8 @@ import type {
 } from './types';
 
 const MINUTE_MS = 60_000;
+
+export type RandomSource = () => number;
 
 const hasTalent = (state: GameState, talentId: string) =>
   state.character.talents.some((talent) => talent.id === talentId);
@@ -120,6 +134,7 @@ const hasCompletedExplorationEvent = (state: GameState, eventId: ExplorationEven
 const getNextExplorationEvent = (
   state: GameState,
   action: GameState['character']['currentAction'],
+  random: RandomSource,
 ) => {
   if (state.pendingExplorationEvent || !action || action.type !== 'explore' || !action.locationId) {
     return null;
@@ -135,14 +150,15 @@ const getNextExplorationEvent = (
     : hasTalent(state, 'solitary-star')
       ? 0.75
       : 0.45;
-  if (Math.random() > eventChance) return null;
-  return pick(availableEvents);
+  if (random() > eventChance) return null;
+  return pick(availableEvents, random);
 };
 
-const randomInt = (min: number, max: number) =>
-  Math.floor(Math.random() * (max - min + 1)) + min;
+const randomInt = (min: number, max: number, random: RandomSource = Math.random) =>
+  Math.floor(random() * (max - min + 1)) + min;
 
-const pick = <T,>(items: readonly T[]) => items[Math.floor(Math.random() * items.length)];
+const pick = <T,>(items: readonly T[], random: RandomSource = Math.random) =>
+  items[Math.floor(random() * items.length)];
 
 const endLife = (
   state: GameState,
@@ -311,6 +327,16 @@ const ACTION_PLAN_NOTES: Record<ActionType, readonly string[]> = {
     '你把任务简报读了两遍，确认上面没有写“必死”二字，便收好行囊出发。',
     '门中长老说得轻描淡写，仿佛山路、阵眼和妖兽都只是纸上的墨点。',
   ],
+  breakthrough: [
+    '你把蒲团移到灵气最稳的位置，开始为叩关整理每一寸气机。',
+    '灵石落入阵眼，换来一段不被琐事打扰的准备时间。接下来要看的，是你能不能守住这口气。',
+    '关隘不是靠蛮力撞开的门。你先把心境、灵气和退路一一摆好，再决定何时发力。',
+  ],
+  foundation_trial: [
+    '筑基之后，山门外的风已经不再满足于讲述旧故事。你沿着新显出的石阶，去试炼场看看自己的脚步。',
+    '你把境界稳在丹田深处，带上空白的残卷，准备去更高处换一份真正值得留下的见闻。',
+    '从今天起，凡人的山路不再是全部。你向那片只对筑基修士开放的云外峰场走去。',
+  ],
 };
 
 const CAVE_PRODUCTION_RESULTS = [
@@ -331,17 +357,116 @@ const CAVE_COLLECTION_RESULTS = [
   '收获不算惊天动地，却很踏实：一部分进了经脉，一部分进了药篓。修仙的家底，就是这样一点点攒出来的。',
 ];
 
-const actionResult = (state: GameState, actionType: ActionType, completedAt: number) => {
+const resolveBreakthrough = (
+  state: GameState,
+  completedAt: number,
+  random: RandomSource,
+) => {
+  const { character } = state;
+  if (character.realm.cultivation < character.realm.cultivationRequired) return [];
+  if (character.breakthroughCooldownUntil && character.breakthroughCooldownUntil > completedAt) return [];
+
+  const chance = Math.min(
+    0.92,
+    0.45 + character.attributes.mentalState / 200 + character.attributes.comprehension / 300,
+  );
+  const success = random() < chance;
+  const entries: LedgerEntry[] = [];
+
+  if (success) {
+    const enteringFoundation = character.realm.stage >= 12 && character.realm.major === 'qi_refining';
+    if (character.realm.stage < 12) {
+      character.realm.stage += 1;
+      character.realm.cultivation -= character.realm.cultivationRequired;
+      character.realm.cultivationRequired += 25;
+    } else if (character.realm.major === 'qi_refining') {
+      character.realm.major = 'foundation_establishment';
+      character.realm.stage = 1;
+      character.realm.cultivation = 0;
+      character.realm.cultivationRequired = 300;
+    }
+    character.breakthroughCooldownUntil = null;
+    character.attributes.mentalState = Math.min(100, character.attributes.mentalState + 10);
+    entries.push(
+      createLedgerEntry(
+        'breakthrough',
+        pick(['小境界，已过', '丹田一声清鸣', '关隘之后又见新天'], random),
+        pick([
+          '灵气冲过关隘，丹田中传来一声清鸣。你回头看去，来时那道门已经退成了很远的一线。',
+          '瓶颈像一层薄冰，从脚下悄然碎开。没有天雷，也没有仙人祝贺，但你知道自己已经不是原来的自己。',
+          '你没有等到什么惊天动地的异象，只有一口比往常更长的呼吸。吐纳归于平静时，境界已经换了名字。',
+        ], random),
+        ['突破成功'],
+        completedAt,
+      ),
+    );
+    if (enteringFoundation) {
+      entries.push(
+        createLedgerEntry(
+          'system',
+          '筑基新途',
+          '筑基之后，旧日只够炼气修士行走的山河终于露出边界。修炼页已经开放“筑基试炼”，那里有更高阶的残页，也有不再适合凡俗眼光的风景。',
+          ['筑基开启', '新行动：筑基试炼'],
+          completedAt,
+        ),
+      );
+    }
+  } else {
+    const mentalLoss = hasTalent(state, 'plain-bone') ? 8 : 15;
+    character.attributes.mentalState = Math.max(0, character.attributes.mentalState - mentalLoss);
+    character.breakthroughCooldownUntil = completedAt + BREAKTHROUGH_FAILURE_COOLDOWN_MINUTES * MINUTE_MS;
+    entries.push(
+      createLedgerEntry(
+        'breakthrough',
+        pick(['关门未开', '冲关暂止', '瓶颈前收势'], random),
+        pick([
+          '你在最后一刻没能稳住心神，积累的灵气散入四肢百骸。关隘没有恶意，只是还不肯让路。',
+          '那道门只差半寸便要打开，偏偏心念先乱了一拍。灵气退回经脉，留下的不是伤，而是一堂昂贵的课。',
+          '冲势撞上瓶颈后散成细流。你保住了根基，却也明白下一次叩门前，最好先把心里的杂音收拾干净。',
+        ], random),
+        [`心境 -${mentalLoss}`, `冲关冷却 ${BREAKTHROUGH_FAILURE_COOLDOWN_MINUTES} 分钟`],
+        completedAt,
+      ),
+    );
+  }
+
+  return entries;
+};
+
+const actionResult = (
+  state: GameState,
+  actionType: ActionType,
+  completedAt: number,
+  random: RandomSource,
+) => {
+  if (actionType === 'breakthrough') {
+    return resolveBreakthrough(state, completedAt, random);
+  }
+
   const { character, inventory } = state;
   const caveEffects = getCaveEffects(state.cave);
   const techniqueEffects = getTechniqueEffects(state.cultivationPath);
   const sectEffects = getSectEffects(state.social.sect.sectId);
+  const choose = <T,>(items: readonly T[]) => pick(items, random);
   const entries: LedgerEntry[] = [];
   let cultivationGain = 0;
   let body = '';
   let title = `${ACTIONS[actionType].label}完成`;
   let newlyDiscoveredLocation: ExplorationLocationId | null = null;
   const changes: string[] = [];
+  const startingInjury = character.injury;
+  let temperUsedHerb = false;
+
+  if (actionType === 'foundation_trial') {
+    const stoneGain = randomInt(18, 30, random);
+    const fragmentGain = randomInt(1, 2, random);
+    inventory.spiritStones += stoneGain;
+    inventory.techniqueFragments += fragmentGain;
+    cultivationGain = 24 + Math.min(12, character.realm.stage * 2);
+    title = choose(['云外峰场归来', '试炼石阶尽头', '筑基后的一次远行']);
+    body = `${choose(ACTION_PLAN_NOTES.foundation_trial)}你在断云石台下找到灵石 ${stoneGain} 枚和功法残页 ${fragmentGain} 页，带回来的不只是收获，还有一段关于更高境界的模糊预感。`;
+    changes.push(`灵石 +${stoneGain}`, `功法残页 +${fragmentGain}`, `修为 +${cultivationGain}`);
+  }
 
   if (actionType === 'meditate') {
     cultivationGain = 18 + Math.floor(character.attributes.comprehension / 5);
@@ -349,14 +474,17 @@ const actionResult = (state: GameState, actionType: ActionType, completedAt: num
     cultivationGain = Math.floor(
       cultivationGain * caveEffects.cultivationMultiplier * (1 + techniqueEffects.cultivationMultiplier + sectEffects.cultivationMultiplier),
     );
-    title = pick(['一轮周天归于平稳', '蒲团上的安静功课', '灵气走过一周天', '今日吐纳无惊无险']);
-    body = pick(MEDITATE_RESULTS);
+    title = choose(['一轮周天归于平稳', '蒲团上的安静功课', '灵气走过一周天', '今日吐纳无惊无险']);
+    body = choose(MEDITATE_RESULTS);
     changes.push(`修为 +${cultivationGain}`);
   }
 
   if (actionType === 'temper') {
     const hasHerb = inventory.herbs > 0;
-    if (hasHerb) inventory.herbs -= 1;
+    if (hasHerb) {
+      inventory.herbs -= 1;
+      temperUsedHerb = true;
+    }
     const physiqueGain = hasHerb ? 2 : 1;
     cultivationGain = (hasHerb ? 14 : 8) + Math.floor(character.attributes.spiritSense / 6);
     cultivationGain = Math.floor(
@@ -367,8 +495,8 @@ const actionResult = (state: GameState, actionType: ActionType, completedAt: num
       0,
       Math.min(100, character.attributes.mentalState + (hasHerb ? 1 : -1)),
     );
-    title = hasHerb ? pick(['药力入骨', '一轮淬体归稳', '根骨添了一分沉意']) : pick(['无药磨脉', '硬熬一轮淬体', '以灵气锻身']);
-    body = hasHerb ? pick(TEMPER_WITH_HERB_RESULTS) : pick(TEMPER_WITHOUT_HERB_RESULTS);
+    title = hasHerb ? choose(['药力入骨', '一轮淬体归稳', '根骨添了一分沉意']) : choose(['无药磨脉', '硬熬一轮淬体', '以灵气锻身']);
+    body = hasHerb ? choose(TEMPER_WITH_HERB_RESULTS) : choose(TEMPER_WITHOUT_HERB_RESULTS);
     changes.push(
       ...[
         `修为 +${cultivationGain}`,
@@ -387,8 +515,8 @@ const actionResult = (state: GameState, actionType: ActionType, completedAt: num
     character.attributes.comprehension += 1;
     character.attributes.spiritSense += 1;
     character.attributes.mentalState = Math.min(100, character.attributes.mentalState + 6);
-    title = pick(['识海微明', '静观所得', '念头沉入清水', '一线悟处']);
-    body = pick(INSIGHT_RESULTS);
+    title = choose(['识海微明', '静观所得', '念头沉入清水', '一线悟处']);
+    body = choose(INSIGHT_RESULTS);
     changes.push('悟性 +1', '神识 +1', '心境 +6', `修为 +${cultivationGain}`);
     const techniqueProgress = getTechniqueProgress(state.cultivationPath);
     if (techniqueProgress) {
@@ -403,14 +531,21 @@ const actionResult = (state: GameState, actionType: ActionType, completedAt: num
     cultivationGain = Math.floor(
       cultivationGain * caveEffects.cultivationMultiplier * (1 + techniqueEffects.cultivationMultiplier + sectEffects.cultivationMultiplier),
     );
-    const injured = Math.random() < 0.25;
+    const injured = random() < 0.25;
     character.attributes.mentalState = Math.max(0, character.attributes.mentalState - 5);
-    title = injured ? pick(['经脉微裂', '险招留下的刺痛', '强行运功，略受反噬']) : pick(['险中取进', '刀锋上的一轮运功', '压住了那口险气']);
-    body = injured ? pick(OVERDRIVE_INJURY_RESULTS) : pick(OVERDRIVE_SAFE_RESULTS);
+    title = injured ? choose(['经脉微裂', '险招留下的刺痛', '强行运功，略受反噬']) : choose(['险中取进', '刀锋上的一轮运功', '压住了那口险气']);
+    body = injured ? choose(OVERDRIVE_INJURY_RESULTS) : choose(OVERDRIVE_SAFE_RESULTS);
     changes.push(`修为 +${cultivationGain}`, '心境 -5');
     if (injured) {
       character.attributes.physique = Math.max(1, character.attributes.physique - 1);
+      character.injury = addInjury(
+        character.injury,
+        'overdrive',
+        random() < 0.18 ? 2 : 1,
+        completedAt,
+      );
       changes.push('根骨 -1');
+      changes.push(`持续伤势：${getInjuryLabel(character.injury)}`);
     }
   }
 
@@ -419,28 +554,28 @@ const actionResult = (state: GameState, actionType: ActionType, completedAt: num
     const location = getExplorationLocation(locationId);
 
     if (locationId === 'qingstone-mountain') {
-      const herbGain = hasTalent(state, 'herbal-heart') ? randomInt(2, 4) : randomInt(1, 3);
-      const stoneGain = (hasTalent(state, 'sword-intent') ? randomInt(5, 10) : randomInt(3, 8)) + techniqueEffects.explorationStoneBonus + sectEffects.explorationStoneBonus;
+      const herbGain = hasTalent(state, 'herbal-heart') ? randomInt(2, 4, random) : randomInt(1, 3, random);
+      const stoneGain = (hasTalent(state, 'sword-intent') ? randomInt(5, 10, random) : randomInt(3, 8, random)) + techniqueEffects.explorationStoneBonus + sectEffects.explorationStoneBonus;
       inventory.herbs += herbGain;
       inventory.spiritStones += stoneGain;
       cultivationGain = 5;
-      title = pick(['青石山回响', '山雾里的旧脚印', '铃声引路', '猎户棚遗物', '山狐留下的路标']);
-      body = pick(EXPLORE_RESULTS)(herbGain, stoneGain);
+      title = choose(['青石山回响', '山雾里的旧脚印', '铃声引路', '猎户棚遗物', '山狐留下的路标']);
+      body = choose(EXPLORE_RESULTS)(herbGain, stoneGain);
       changes.push(`灵草 +${herbGain}`, `灵石 +${stoneGain}`, '修为 +5');
     }
 
     if (locationId === 'blackwind-valley') {
-      const herbGain = hasTalent(state, 'herbal-heart') ? randomInt(1, 3) : randomInt(0, 2);
-      const stoneGain = (hasTalent(state, 'sword-intent') ? randomInt(10, 18) : randomInt(6, 14)) + techniqueEffects.explorationStoneBonus + sectEffects.explorationStoneBonus;
-      const fragmentGain = Math.random() < (hasTalent(state, 'perfect-memory') ? 0.65 : 0.4) ? 1 : 0;
-      const injured = Math.random() < 0.22;
-      const mentalLoss = Math.random() < 0.3 ? 4 : 0;
+      const herbGain = hasTalent(state, 'herbal-heart') ? randomInt(1, 3, random) : randomInt(0, 2, random);
+      const stoneGain = (hasTalent(state, 'sword-intent') ? randomInt(10, 18, random) : randomInt(6, 14, random)) + techniqueEffects.explorationStoneBonus + sectEffects.explorationStoneBonus;
+      const fragmentGain = random() < (hasTalent(state, 'perfect-memory') ? 0.65 : 0.4) ? 1 : 0;
+      const injured = random() < 0.22;
+      const mentalLoss = random() < 0.3 ? 4 : 0;
       inventory.herbs += herbGain;
       inventory.spiritStones += stoneGain;
       inventory.techniqueFragments += fragmentGain;
       cultivationGain = 12;
-      title = pick(['黑风过碑', '谷底拾遗', '风里有字', '乱石滩归来']);
-      body = pick(BLACKWIND_RESULTS)(herbGain, stoneGain, fragmentGain);
+      title = choose(['黑风过碑', '谷底拾遗', '风里有字', '乱石滩归来']);
+      body = choose(BLACKWIND_RESULTS)(herbGain, stoneGain, fragmentGain);
       changes.push(`灵草 +${herbGain}`, `灵石 +${stoneGain}`, '修为 +12');
       if (fragmentGain > 0) changes.push(`功法残页 +${fragmentGain}`);
       if (mentalLoss > 0) {
@@ -449,25 +584,36 @@ const actionResult = (state: GameState, actionType: ActionType, completedAt: num
       }
       if (injured) {
         character.attributes.physique = Math.max(1, character.attributes.physique - 1);
+        character.injury = addInjury(
+          character.injury,
+          'exploration',
+          random() < 0.18 ? 2 : 1,
+          completedAt,
+        );
         changes.push('根骨 -1');
+        changes.push(`持续伤势：${getInjuryLabel(character.injury)}`);
       }
     }
 
     if (locationId === 'nameless-well') {
-      const stoneGain = randomInt(10, 20);
-      const fragmentGain = hasTalent(state, 'perfect-memory') ? randomInt(1, 3) : randomInt(1, 2);
-      const shaken = Math.random() < 0.3;
-      const karmaGain = Math.random() < 0.5 ? 1 : -1;
+      const stoneGain = randomInt(10, 20, random);
+      const fragmentGain = hasTalent(state, 'perfect-memory') ? randomInt(1, 3, random) : randomInt(1, 2, random);
+      const shaken = random() < 0.3;
+      const karmaGain = random() < 0.5 ? 1 : -1;
       inventory.spiritStones += stoneGain;
       inventory.techniqueFragments += fragmentGain;
       cultivationGain = 10;
       character.attributes.karma += karmaGain;
-      title = pick(['井底回声', '无名之字', '迟到的回答', '井中取火']);
-      body = pick(WELL_RESULTS)(stoneGain, fragmentGain, shaken);
+      title = choose(['井底回声', '无名之字', '迟到的回答', '井中取火']);
+      body = choose(WELL_RESULTS)(stoneGain, fragmentGain, shaken);
       changes.push(`灵石 +${stoneGain}`, `功法残页 +${fragmentGain}`, '修为 +10', `因果 ${karmaGain > 0 ? '+' : ''}${karmaGain}`);
       if (shaken) {
         character.attributes.mentalState = Math.max(0, character.attributes.mentalState - 8);
         changes.push('心境 -8');
+      }
+      if (random() < 0.18) {
+        character.injury = addInjury(character.injury, 'exploration', 1, completedAt);
+        changes.push(`持续伤势：${getInjuryLabel(character.injury)}`);
       }
     }
 
@@ -493,8 +639,8 @@ const actionResult = (state: GameState, actionType: ActionType, completedAt: num
     inventory.techniqueFragments += fragmentGain;
     character.attributes.comprehension += 1;
     cultivationGain = 8;
-    title = hasHerb ? pick(['残卷露出暗线', '烛火下的断句', '安神香未尽', '功法缺口']) : pick(['没有安神香的研读', '残卷与蚊虫齐飞', '勉强记下几句']);
-    body = hasHerb ? pick(STUDY_WITH_HERB_RESULTS) : pick(STUDY_WITHOUT_HERB_RESULTS);
+    title = hasHerb ? choose(['残卷露出暗线', '烛火下的断句', '安神香未尽', '功法缺口']) : choose(['没有安神香的研读', '残卷与蚊虫齐飞', '勉强记下几句']);
+    body = hasHerb ? choose(STUDY_WITH_HERB_RESULTS) : choose(STUDY_WITHOUT_HERB_RESULTS);
     changes.push(`功法残页 +${fragmentGain}`, '悟性 +1', '修为 +8');
     const techniqueProgress = getTechniqueProgress(state.cultivationPath);
     if (techniqueProgress) {
@@ -516,12 +662,13 @@ const actionResult = (state: GameState, actionType: ActionType, completedAt: num
       state.social.sect.reputation += rewards.reputation;
       state.social.sect.contribution += rewards.contribution;
       const risky = mission.id.endsWith('escort') || mission.id.endsWith('cure') || mission.id.endsWith('seal');
-      const suffered = risky && Math.random() < 0.22;
+      const suffered = risky && random() < 0.22;
       if (suffered) {
         character.attributes.mentalState = Math.max(0, character.attributes.mentalState - 4);
+        character.injury = addInjury(character.injury, 'sect_mission', 1, completedAt);
       }
       title = `${mission.title}完成`;
-      body = `${mission.summary}你把任务交回宗门，门中执事没有夸你，只在名册上多添了一笔。${suffered ? '回程时的一点意外让你心神不宁了片刻。' : '这回没有留下多余的伤口。'}`;
+      body = `${mission.summary}你把任务交回宗门，门中执事没有夸你，只在名册上多添了一笔。${suffered ? '回程时的一点意外让你心神不宁，也留下了需要调养的伤势。' : '这回没有留下多余的伤口。'}`;
       changes.push(
         `宗门声望 +${rewards.reputation}`,
         `宗门贡献 +${rewards.contribution}`,
@@ -530,6 +677,7 @@ const actionResult = (state: GameState, actionType: ActionType, completedAt: num
         rewards.techniqueFragments ? `功法残页 +${rewards.techniqueFragments}` : '',
         rewards.cultivation ? `修为 +${rewards.cultivation}` : '',
         suffered ? '心境 -4' : '',
+        suffered ? `持续伤势：${getInjuryLabel(character.injury)}` : '',
       );
     } else {
       title = '宗门令未能对上名册';
@@ -537,6 +685,27 @@ const actionResult = (state: GameState, actionType: ActionType, completedAt: num
     }
   }
 
+  const injuryEffects = getInjuryEffects(startingInjury);
+  const originalCultivationGain = cultivationGain;
+  cultivationGain = Math.floor(cultivationGain * injuryEffects.cultivationMultiplier);
+  if (cultivationGain !== originalCultivationGain) {
+    const cultivationChangeIndex = changes.findIndex((change) => change.startsWith('修为 +'));
+    if (cultivationChangeIndex >= 0) changes[cultivationChangeIndex] = `修为 +${cultivationGain}`;
+  }
+  const recoveryPoints = actionType === 'temper'
+    ? temperUsedHerb ? 2 : 1
+    : actionType === 'meditate' || actionType === 'insight'
+      ? 1
+      : 0;
+  if (startingInjury && recoveryPoints > 0) {
+    const recoveryBefore = startingInjury.recoveryPoints;
+    character.injury = recoverInjury(character.injury, recoveryPoints);
+    if (!character.injury) {
+      changes.push('伤势痊愈');
+    } else if (character.injury.recoveryPoints < recoveryBefore) {
+      changes.push(`伤势恢复 ${recoveryBefore - character.injury.recoveryPoints}`);
+    }
+  }
   character.realm.cultivation += cultivationGain;
   const entry = createLedgerEntry(
     actionType === 'explore' ? 'exploration' : actionType === 'sect_mission' ? 'relationship' : 'action',
@@ -565,7 +734,7 @@ const actionResult = (state: GameState, actionType: ActionType, completedAt: num
       createLedgerEntry(
         'breakthrough',
         '关隘露出缝隙',
-        pick(BREAKTHROUGH_HINTS),
+        choose(BREAKTHROUGH_HINTS),
         ['突破', '待处理'],
         completedAt,
       ),
@@ -575,8 +744,14 @@ const actionResult = (state: GameState, actionType: ActionType, completedAt: num
   return entries;
 };
 
-export const settleGame = (input: GameState, now = Date.now()): SettlementResult => {
+export const settleGame = (
+  input: GameState,
+  now = Date.now(),
+  random: RandomSource = Math.random,
+): SettlementResult => {
   const state = structuredClone(input);
+  state.character.injury = state.character.injury ?? null;
+  state.character.breakthroughCooldownUntil = state.character.breakthroughCooldownUntil ?? null;
   state.lifeStatus = state.lifeStatus ?? 'alive';
   state.pastLives = state.pastLives ?? [];
   state.legacy = state.legacy ?? {
@@ -601,8 +776,8 @@ export const settleGame = (input: GameState, now = Date.now()): SettlementResult
     newEntries.push(
       createLedgerEntry(
         'action',
-        pick(['洞府替你守了一夜', '石室里攒下了一点东西', '阵旗微亮，灵田有收成', '归来时的洞府回信']),
-        pick(CAVE_PRODUCTION_RESULTS),
+        pick(['洞府替你守了一夜', '石室里攒下了一点东西', '阵旗微亮，灵田有收成', '归来时的洞府回信'], random),
+        pick(CAVE_PRODUCTION_RESULTS, random),
         [
           settledCave.produced.cultivation > 0
             ? `待收修为 +${settledCave.produced.cultivation}`
@@ -631,12 +806,16 @@ export const settleGame = (input: GameState, now = Date.now()): SettlementResult
 
   const cappedElapsedMs = Math.min(elapsedMs, MAX_OFFLINE_MINUTES * MINUTE_MS);
   if (state.character.currentAction) {
-    state.character.ageDays += (cappedElapsedMs / MINUTE_MS) * REAL_MINUTE_TO_GAME_DAYS;
+    const activeActionMs = Math.min(
+      cappedElapsedMs,
+      Math.max(0, state.character.currentAction.endsAt - state.lastSettledAt),
+    );
+    state.character.ageDays += (activeActionMs / MINUTE_MS) * REAL_MINUTE_TO_GAME_DAYS;
   }
 
   if (state.character.currentAction && now >= state.character.currentAction.endsAt) {
     const completedAction = state.character.currentAction;
-    newEntries.push(...actionResult(state, completedAction.type, completedAction.endsAt));
+    newEntries.push(...actionResult(state, completedAction.type, completedAction.endsAt, random));
     if (state.social.sect.sectId) {
       state.social.sect.contribution += 1;
     }
@@ -661,7 +840,7 @@ export const settleGame = (input: GameState, now = Date.now()): SettlementResult
         );
       }
       const explorationEvent = !personEvent && !state.social.pendingPersonEvent
-        ? getNextExplorationEvent(state, completedAction)
+        ? getNextExplorationEvent(state, completedAction, random)
         : null;
       if (explorationEvent) {
         state.pendingExplorationEvent = {
@@ -686,8 +865,8 @@ export const settleGame = (input: GameState, now = Date.now()): SettlementResult
         newEntries.push(
           createLedgerEntry(
             'action',
-            pick(['寻得一处归处', '石窟初成', '洞府终于有门了']),
-            pick(CAVE_UNLOCK_RESULTS),
+            pick(['寻得一处归处', '石窟初成', '洞府终于有门了'], random),
+            pick(CAVE_UNLOCK_RESULTS, random),
             ['洞府解锁', '可建造'],
             completedAction.endsAt,
           ),
@@ -705,19 +884,79 @@ export const settleGame = (input: GameState, now = Date.now()): SettlementResult
   return { state, newEntries };
 };
 
+export const getBreakthroughStartError = (
+  input: GameState,
+  now = Date.now(),
+) => {
+  if (input.lifeStatus === 'dead') return '本世已经结束，不能再安排突破。';
+  if (input.character.currentAction) return '你正在进行另一项行动。';
+  if (input.pendingExplorationEvent || input.social?.pendingPersonEvent) {
+    return '请先处理眼前的事件，再准备冲关。';
+  }
+  if (input.character.realm.cultivation < input.character.realm.cultivationRequired) {
+    return `修为还差 ${input.character.realm.cultivationRequired - input.character.realm.cultivation} 点，尚未触及关隘。`;
+  }
+  if (input.character.breakthroughCooldownUntil && input.character.breakthroughCooldownUntil > now) {
+    const remainingMinutes = Math.ceil((input.character.breakthroughCooldownUntil - now) / MINUTE_MS);
+    return `冲关余波未散，还需等待约 ${remainingMinutes} 分钟。`;
+  }
+  if (getInjuryEffects(input.character.injury).blocksOverdrive) {
+    return '重伤未愈，不能冒险冲关。先用平稳功课或洞府灵草调养。';
+  }
+  if (input.inventory.spiritStones < BREAKTHROUGH_COST_SPIRIT_STONES) {
+    return `准备突破需要 ${BREAKTHROUGH_COST_SPIRIT_STONES} 枚灵石。`;
+  }
+  return null;
+};
+
+export const getActionStartError = (
+  input: GameState,
+  type: ActionType,
+  locationId: ExplorationLocationId = 'qingstone-mountain',
+  missionId?: SectMissionId,
+  now = Date.now(),
+) => {
+  if (type === 'breakthrough') return getBreakthroughStartError(input, now);
+  if (input.lifeStatus === 'dead') return '本世已经结束，不能再安排行动。';
+  if (input.character.currentAction) return '你正在进行另一项行动。';
+  if (input.pendingExplorationEvent || input.social?.pendingPersonEvent) {
+    return '请先处理眼前的事件，再安排新的行动。';
+  }
+  if (type === 'overdrive' && getInjuryEffects(input.character.injury).blocksOverdrive) {
+    return '重伤未愈，不能继续极限运功。先用平稳功课或灵草调养伤势。';
+  }
+  if (type === 'foundation_trial' && input.character.realm.major !== 'foundation_establishment') {
+    return '筑基之后才能踏入试炼场。先继续修炼，跨过当前境界关隘。';
+  }
+  if (type === 'explore' && !input.discoveredLocations.includes(locationId)) {
+    return '这个地点尚未发现，暂时不能前往。';
+  }
+  if (type === 'sect_mission') {
+    const mission = missionId ? getSectMission(missionId) : null;
+    if (!mission || input.social?.sect?.sectId !== mission.sectId) {
+      return '这项差事不属于你当前的宗门。';
+    }
+  }
+  return null;
+};
+
 export const startAction = (
   input: GameState,
   type: ActionType,
   now = Date.now(),
   locationId: ExplorationLocationId = 'qingstone-mountain',
   missionId?: SectMissionId,
+  random: RandomSource = Math.random,
 ): GameState => {
   const state = structuredClone(input);
+  if (getActionStartError(state, type, locationId, missionId, now)) return state;
+
   const selectedLocationId = state.discoveredLocations.includes(locationId)
     ? locationId
     : 'qingstone-mountain';
   const selectedLocation = type === 'explore' ? getExplorationLocation(selectedLocationId) : null;
   const duration = getActionDurationMinutes(type, state.cave, selectedLocationId, state.social?.sect?.sectId ?? null, missionId) * MINUTE_MS;
+  const choose = <T,>(items: readonly T[]) => pick(items, random);
   state.character.currentAction = {
     id: `${now}-${type}`,
     type,
@@ -731,7 +970,7 @@ export const startAction = (
     createLedgerEntry(
       'system',
       `已安排：${ACTIONS[type].label}`,
-      `${pick(ACTION_PLAN_NOTES[type])}${selectedLocation ? `${selectedLocation.label}：${selectedLocation.summary}` : ACTIONS[type].description}预计在 ${getActionDurationMinutes(type, state.cave, selectedLocationId, state.social?.sect?.sectId ?? null, missionId)} 分钟后完成。你可以关闭网页，回来时查看结果。`,
+      `${choose(ACTION_PLAN_NOTES[type])}${selectedLocation ? `${selectedLocation.label}：${selectedLocation.summary}` : ACTIONS[type].description}预计在 ${getActionDurationMinutes(type, state.cave, selectedLocationId, state.social?.sect?.sectId ?? null, missionId)} 分钟后完成。你可以关闭网页，回来时查看结果。`,
       [ACTIONS[type].label, selectedLocation?.risk ?? ACTIONS[type].risk],
       now,
     ),
@@ -740,10 +979,53 @@ export const startAction = (
   return state;
 };
 
+export type BreakthroughMutationResult = SettlementResult & {
+  error?: string;
+};
+
+export const startBreakthrough = (
+  input: GameState,
+  now = Date.now(),
+  random: RandomSource = Math.random,
+): BreakthroughMutationResult => {
+  const state = structuredClone(input);
+  const error = getBreakthroughStartError(state, now);
+  if (error) return { state, newEntries: [], error };
+
+  const durationMinutes = getActionDurationMinutes(
+    'breakthrough',
+    state.cave,
+    undefined,
+    state.social?.sect?.sectId ?? null,
+  );
+  state.inventory.spiritStones -= BREAKTHROUGH_COST_SPIRIT_STONES;
+  state.character.currentAction = {
+    id: `${now}-breakthrough`,
+    type: 'breakthrough',
+    startedAt: now,
+    endsAt: now + durationMinutes * MINUTE_MS,
+  };
+  state.lastSettledAt = now;
+  const entry = createLedgerEntry(
+    'action',
+    '开始准备突破',
+    `${pick(ACTION_PLAN_NOTES.breakthrough, random)}这段准备需要 ${durationMinutes} 分钟，结束后才会真正叩击关隘。`,
+    [
+      '突破准备',
+      `灵石 -${BREAKTHROUGH_COST_SPIRIT_STONES}`,
+      `耗时 ${durationMinutes} 分钟`,
+    ],
+    now,
+  );
+  state.ledger = [entry, ...state.ledger].slice(0, 100);
+  return { state, newEntries: [entry] };
+};
+
 export const startSectMission = (
   input: GameState,
   missionId: SectMissionId,
   now = Date.now(),
+  random: RandomSource = Math.random,
 ): SocialMutationResult => {
   const state = structuredClone(input);
   state.social = state.social ?? createSocialState();
@@ -758,7 +1040,7 @@ export const startSectMission = (
     return { state, newEntries: [], error: '请先处理眼前的事件，再接下新的宗门任务。' };
   }
   return {
-    state: startAction(state, 'sect_mission', now, 'qingstone-mountain', missionId),
+    state: startAction(state, 'sect_mission', now, 'qingstone-mountain', missionId, random),
     newEntries: [],
   };
 };
@@ -1081,7 +1363,11 @@ const settleCaveForMutation = (state: GameState, now: number) => {
   return settled;
 };
 
-export const collectCave = (input: GameState, now = Date.now()): CaveMutationResult => {
+export const collectCave = (
+  input: GameState,
+  now = Date.now(),
+  random: RandomSource = Math.random,
+): CaveMutationResult => {
   const state = structuredClone(input);
   settleCaveForMutation(state, now);
 
@@ -1102,8 +1388,8 @@ export const collectCave = (input: GameState, now = Date.now()): CaveMutationRes
   const entries = [
     createLedgerEntry(
       'action',
-      pick(['收好这一笔家底', '洞府今日有所得', '把灵气和灵草带回身边']),
-      pick(CAVE_COLLECTION_RESULTS),
+      pick(['收好这一笔家底', '洞府今日有所得', '把灵气和灵草带回身边'], random),
+      pick(CAVE_COLLECTION_RESULTS, random),
       [
         collected.cultivation > 0 ? `修为 +${collected.cultivation}` : '',
         collected.herbs > 0 ? `灵草 +${collected.herbs}` : '',
@@ -1129,10 +1415,49 @@ export const collectCave = (input: GameState, now = Date.now()): CaveMutationRes
   return { state, newEntries: entries };
 };
 
+export const treatInjury = (
+  input: GameState,
+  now = Date.now(),
+): CaveMutationResult => {
+  const state = structuredClone(input);
+  settleCaveForMutation(state, now);
+
+  if (!state.cave.unlocked) {
+    return { state, newEntries: [], error: '洞府尚未解锁。完成第一次探索后才能治疗伤势。' };
+  }
+  if (!state.character.injury) {
+    return { state, newEntries: [], error: '当前没有需要治疗的持续伤势。' };
+  }
+  const herbCost = 2;
+  if (state.inventory.herbs < herbCost) {
+    return { state, newEntries: [], error: `还需要 ${herbCost} 株灵草才能调配疗伤药。` };
+  }
+
+  state.inventory.herbs -= herbCost;
+  const recoveryBefore = state.character.injury.recoveryPoints;
+  state.character.injury = recoverInjury(state.character.injury, 3);
+  const healed = !state.character.injury;
+  const entry = createLedgerEntry(
+    'action',
+    healed ? '伤势终于痊愈' : '灵草调养经脉',
+    healed
+      ? '你把灵草熬成一碗苦得发涩的药汤，药力沿着受损经脉慢慢铺开。等最后一缕痛意散去，这段险路才算真正翻页。'
+      : '你在洞府里以灵草温养受创的经脉，疼痛退下去一些，但还需要几次这样的调养才能完全恢复。',
+    [
+      `灵草 -${herbCost}`,
+      healed ? '伤势痊愈' : `恢复进度 +${recoveryBefore - (state.character.injury?.recoveryPoints ?? 0)}`,
+    ],
+    now,
+  );
+  state.ledger = [entry, ...state.ledger].slice(0, 100);
+  return { state, newEntries: [entry] };
+};
+
 export const upgradeCaveBuilding = (
   input: GameState,
   buildingId: CaveBuildingId,
   now = Date.now(),
+  random: RandomSource = Math.random,
 ): CaveMutationResult => {
   const state = structuredClone(input);
   settleCaveForMutation(state, now);
@@ -1161,12 +1486,12 @@ export const upgradeCaveBuilding = (
       `${buildingInfo.label}${nextLevel === 1 ? '落成' : '再上一层'}`,
       `洞府添置：${buildingInfo.label}`,
       `${buildingInfo.label}的阵纹亮了起来`,
-    ]),
+    ], random),
     `你用灵石和灵草重新整理洞府，将${buildingInfo.label}提升到了${nextLevel}级。${pick([
       '新的阵纹刚刻下，石室里的灵气便顺着纹路流动起来。',
       '这回不用担心材料白费，洞府的气息确实比之前稳了一截。',
       '工程不大，却让这处石窟终于有了几分修仙居所的模样。',
-    ])}`,
+    ], random)}`,
     [`${buildingInfo.label} Lv.${nextLevel}`, `灵石 -${cost.spiritStones}`, `灵草 -${cost.herbs}`],
     now,
   );
@@ -1174,63 +1499,13 @@ export const upgradeCaveBuilding = (
   return { state, newEntries: [entry] };
 };
 
-export const tryBreakthrough = (input: GameState, now = Date.now()): SettlementResult => {
+export const tryBreakthrough = (
+  input: GameState,
+  now = Date.now(),
+  random: RandomSource = Math.random,
+): SettlementResult => {
   const state = structuredClone(input);
-  const { character } = state;
-  if (character.realm.cultivation < character.realm.cultivationRequired) {
-    return { state, newEntries: [] };
-  }
-
-  const chance = Math.min(
-    0.92,
-    0.45 + character.attributes.mentalState / 200 + character.attributes.comprehension / 300,
-  );
-  const success = Math.random() < chance;
-  const entries: LedgerEntry[] = [];
-
-  if (success) {
-    if (character.realm.stage < 12) {
-      character.realm.stage += 1;
-      character.realm.cultivation -= character.realm.cultivationRequired;
-      character.realm.cultivationRequired += 25;
-    } else if (character.realm.major === 'qi_refining') {
-      character.realm.major = 'foundation_establishment';
-      character.realm.stage = 1;
-      character.realm.cultivation = 0;
-      character.realm.cultivationRequired = 300;
-    }
-    character.attributes.mentalState = Math.min(100, character.attributes.mentalState + 10);
-    entries.push(
-      createLedgerEntry(
-        'breakthrough',
-        pick(['小境界，已过', '丹田一声清鸣', '关隘之后又见新天']),
-        pick([
-          '灵气冲过关隘，丹田中传来一声清鸣。你回头看去，来时那道门已经退成了很远的一线。',
-          '瓶颈像一层薄冰，从脚下悄然碎开。没有天雷，也没有仙人祝贺，但你知道自己已经不是原来的自己。',
-          '你没有等到什么惊天动地的异象，只有一口比往常更长的呼吸。吐纳归于平静时，境界已经换了名字。',
-        ]),
-        ['突破成功'],
-        now,
-      ),
-    );
-  } else {
-    const mentalLoss = hasTalent(state, 'plain-bone') ? 8 : 15;
-    character.attributes.mentalState = Math.max(0, character.attributes.mentalState - mentalLoss);
-    entries.push(
-      createLedgerEntry(
-        'breakthrough',
-        pick(['关门未开', '冲关暂止', '瓶颈前收势']),
-        pick([
-          '你在最后一刻没能稳住心神，积累的灵气散入四肢百骸。关隘没有恶意，只是还不肯让路。',
-          '那道门只差半寸便要打开，偏偏心念先乱了一拍。灵气退回经脉，留下的不是伤，而是一堂昂贵的课。',
-          '冲势撞上瓶颈后散成细流。你保住了根基，却也明白下一次叩门前，最好先把心里的杂音收拾干净。',
-        ]),
-        [`心境 -${mentalLoss}`],
-        now,
-      ),
-    );
-  }
-
+  const entries = resolveBreakthrough(state, now, random);
   state.ledger = [...entries, ...state.ledger].slice(0, 100);
   return { state, newEntries: entries };
 };
