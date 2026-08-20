@@ -110,6 +110,30 @@ const getNextPersonEvent = (
     return PERSON_EVENTS['xuan-song-mountain-gate'];
   }
   if (
+    action.type === 'sect_mission' &&
+    state.social.sect.sectId === 'qingxiao-sword-sect' &&
+    hasCompletedPersonEvent(state, 'xuan-song-mountain-gate') &&
+    !hasCompletedPersonEvent(state, 'qingxiao-sword-trial')
+  ) {
+    return PERSON_EVENTS['qingxiao-sword-trial'];
+  }
+  if (
+    action.type === 'sect_mission' &&
+    state.social.sect.sectId === 'baicao-valley' &&
+    hasCompletedPersonEvent(state, 'xuan-song-mountain-gate') &&
+    !hasCompletedPersonEvent(state, 'baicao-valley-oath')
+  ) {
+    return PERSON_EVENTS['baicao-valley-oath'];
+  }
+  if (
+    action.type === 'sect_mission' &&
+    state.social.sect.sectId === 'tianji-pavilion' &&
+    hasCompletedPersonEvent(state, 'xuan-song-mountain-gate') &&
+    !hasCompletedPersonEvent(state, 'tianji-pavilion-star-chart')
+  ) {
+    return PERSON_EVENTS['tianji-pavilion-star-chart'];
+  }
+  if (
     action.type === 'explore' &&
     action.locationId === 'nameless-well' &&
     !hasCompletedPersonEvent(state, 'nameless-well-soul')
@@ -124,6 +148,30 @@ const getNextPersonEvent = (
     state.social.relationships['nameless-soul'].affinity >= 10
   ) {
     return PERSON_EVENTS['nameless-well-echo'];
+  }
+  if (
+    action.type === 'foundation_trial' &&
+    hasCompletedPersonEvent(state, 'nameless-well-echo') &&
+    !hasCompletedPersonEvent(state, 'nameless-well-oath') &&
+    state.social.relationships['nameless-soul'].affinity >= 10
+  ) {
+    return PERSON_EVENTS['nameless-well-oath'];
+  }
+  if (
+    action.type === 'foundation_trial' &&
+    hasCompletedPersonEvent(state, 'nameless-well-oath') &&
+    !hasCompletedPersonEvent(state, 'nameless-well-gate') &&
+    state.social.relationships['nameless-soul'].affinity >= 20
+  ) {
+    return PERSON_EVENTS['nameless-well-gate'];
+  }
+  if (
+    action.type === 'foundation_trial' &&
+    hasCompletedPersonEvent(state, 'nameless-well-gate') &&
+    !hasCompletedPersonEvent(state, 'nameless-well-ending') &&
+    state.social.relationships['nameless-soul'].affinity >= 30
+  ) {
+    return PERSON_EVENTS['nameless-well-ending'];
   }
   return null;
 };
@@ -1227,11 +1275,13 @@ export const resolvePersonEvent = (
     return { state, newEntries: [], error: '这条人物事件的选项已经失效。' };
   }
 
-  if (
-    (choice.effects.spiritStones ?? 0) < 0 &&
-    state.inventory.spiritStones + (choice.effects.spiritStones ?? 0) < 0
-  ) {
-    return { state, newEntries: [], error: '手边灵石不够，无法选择这项处理方式。' };
+  const inventoryEffects: Array<keyof GameState['inventory']> = [
+    'spiritStones',
+    'herbs',
+    'techniqueFragments',
+  ];
+  if (inventoryEffects.some((key) => state.inventory[key] + (choice.effects[key] ?? 0) < 0)) {
+    return { state, newEntries: [], error: '手边材料不够，无法选择这项处理方式。' };
   }
 
   const relationship = state.social.relationships[event.relationshipId];
@@ -1245,6 +1295,14 @@ export const resolvePersonEvent = (
   state.inventory.herbs += effects.herbs ?? 0;
   state.inventory.techniqueFragments += effects.techniqueFragments ?? 0;
   state.character.realm.cultivation += effects.cultivation ?? 0;
+  state.character.attributes.physique = Math.max(
+    1,
+    state.character.attributes.physique + (effects.physique ?? 0),
+  );
+  state.character.attributes.spiritSense = Math.max(
+    1,
+    state.character.attributes.spiritSense + (effects.spiritSense ?? 0),
+  );
   state.character.attributes.mentalState = Math.max(
     0,
     Math.min(100, state.character.attributes.mentalState + (effects.mentalState ?? 0)),
@@ -1254,6 +1312,9 @@ export const resolvePersonEvent = (
   if (effects.sectInvitation) state.social.sect.invited = true;
   if (effects.sectReputation && state.social.sect.sectId) {
     state.social.sect.reputation = Math.max(0, state.social.sect.reputation + effects.sectReputation);
+  }
+  if (effects.sectContribution && state.social.sect.sectId) {
+    state.social.sect.contribution = Math.max(0, state.social.sect.contribution + effects.sectContribution);
   }
 
   state.social.completedPersonEventIds = [
@@ -1268,11 +1329,14 @@ export const resolvePersonEvent = (
     effects.herbs ? `灵草 ${effects.herbs > 0 ? '+' : ''}${effects.herbs}` : '',
     effects.techniqueFragments ? `功法残页 ${effects.techniqueFragments > 0 ? '+' : ''}${effects.techniqueFragments}` : '',
     effects.cultivation ? `修为 +${effects.cultivation}` : '',
+    effects.physique ? `根骨 ${effects.physique > 0 ? '+' : ''}${effects.physique}` : '',
+    effects.spiritSense ? `神识 ${effects.spiritSense > 0 ? '+' : ''}${effects.spiritSense}` : '',
     effects.mentalState ? `心境 ${effects.mentalState > 0 ? '+' : ''}${effects.mentalState}` : '',
     effects.karma ? `因果 ${effects.karma > 0 ? '+' : ''}${effects.karma}` : '',
     effects.fortune ? `气运 ${effects.fortune > 0 ? '+' : ''}${effects.fortune}` : '',
     effects.sectInvitation ? '获得宗门引荐' : '',
     effects.sectReputation ? `宗门声望 ${effects.sectReputation > 0 ? '+' : ''}${effects.sectReputation}` : '',
+    effects.sectContribution ? `宗门贡献 ${effects.sectContribution > 0 ? '+' : ''}${effects.sectContribution}` : '',
   ].filter(Boolean);
   const entry = createLedgerEntry(
     'relationship',

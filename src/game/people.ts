@@ -119,11 +119,14 @@ export type PersonEventEffects = {
   herbs?: number;
   techniqueFragments?: number;
   cultivation?: number;
+  physique?: number;
+  spiritSense?: number;
   mentalState?: number;
   karma?: number;
   fortune?: number;
   sectInvitation?: boolean;
   sectReputation?: number;
+  sectContribution?: number;
 };
 
 export type PersonEventChoice = {
@@ -278,6 +281,87 @@ export const PERSON_EVENTS: Record<PersonEventId, PersonEventDefinition> = {
       },
     ],
   },
+  'qingxiao-sword-trial': {
+    id: 'qingxiao-sword-trial',
+    relationshipId: 'xuan-song',
+    title: '剑炉不问来者',
+    eyebrow: 'QINGXIAO SWORD SECT · 青霄剑宗',
+    summary: '你完成又一次宗门差事后，被带到后山剑炉。这里的剑胚不看修为，只看你是否愿意在无人喝彩时替它挡下第一道火。',
+    choices: [
+      {
+        id: 'guard-the-sword-blank',
+        label: '替剑胚挡火',
+        summary: '火舌舔过你的袖口，未成形的剑胚却在炉中发出一声清响。执事没有夸你，只把你的名字刻进了试剑册。',
+        effects: { affinity: 8, physique: 1, cultivation: 12, sectReputation: 14, sectContribution: 3 },
+      },
+      {
+        id: 'ask-the-sword-question',
+        label: '先问剑为何出炉',
+        summary: '你没有立刻伸手，而是问剑炉：若剑只为胜负出鞘，是否还值得被人带下山。炉火因此安静了片刻。',
+        effects: { affinity: 16, mentalState: 4, sectReputation: 9, sectContribution: 2, karma: 1 },
+      },
+      {
+        id: 'leave-the-sword-blank',
+        label: '让它继续无锋',
+        summary: '你认为有些剑不必急着开锋。执事虽然不解，却承认你至少没有把自己的答案强塞给一块铁。',
+        effects: { affinity: 4, fortune: 1, sectReputation: 5, sectContribution: 5 },
+      },
+    ],
+  },
+  'baicao-valley-oath': {
+    id: 'baicao-valley-oath',
+    relationshipId: 'xuan-song',
+    title: '百草夜行',
+    eyebrow: 'BAICAO VALLEY · 百草谷',
+    summary: '百草谷的夜雨把药圃浇得一片沉默。谷中长老让你在天亮前找出一株会移动的药草，并提醒你：找到它不等于可以把它带走。',
+    choices: [
+      {
+        id: 'protect-the-root',
+        label: '护住药草根系',
+        summary: '你放弃最省事的采摘办法，沿着雨水重新理顺土脉。药草没有被收入药篓，却在第二天开出了一朵只给你看的花。',
+        effects: { affinity: 10, herbs: 3, mentalState: 3, sectReputation: 12, sectContribution: 3 },
+      },
+      {
+        id: 'record-the-medicine',
+        label: '只记下药性',
+        summary: '你没有带走药草，只把它的气味、叶脉和躲雨的方向完整记下。谷中弟子第一次把你当作可以一起看药的人。',
+        effects: { affinity: 18, techniqueFragments: 2, sectReputation: 8, sectContribution: 2 },
+      },
+      {
+        id: 'trade-the-secret',
+        label: '拿药性换一枚丹印',
+        summary: '你把药草的秘密交给长老，换来一枚尚未启封的丹印。有人说你太会算计，也有人说这正是药修该有的清醒。',
+        effects: { affinity: 6, spiritStones: 15, sectReputation: 6, sectContribution: 4, fortune: 1 },
+      },
+    ],
+  },
+  'tianji-pavilion-star-chart': {
+    id: 'tianji-pavilion-star-chart',
+    relationshipId: 'xuan-song',
+    title: '星图缺一角',
+    eyebrow: 'TIANJI PAVILION · 天机阁',
+    summary: '天机阁把你带进一间没有窗的观星室。整幅星图只缺一角，阁中人却说，那一角不是遗失，而是有人故意不让后来者看见。',
+    choices: [
+      {
+        id: 'fill-the-missing-star',
+        label: '补上那颗星',
+        summary: '你用自己的灵力落下一点微光，星图立刻推演出一条从未记录的山路。阁中人没有阻止，只把这次推演记在你的名下。',
+        effects: { affinity: 12, cultivation: 10, karma: 2, sectReputation: 13, sectContribution: 3 },
+      },
+      {
+        id: 'leave-the-blank',
+        label: '保留空白',
+        summary: '你认为未知本身也是一种坐标，于是没有替星图做完最后一步。观星室里的阵灯因此多亮了一刻。',
+        effects: { affinity: 18, mentalState: 5, sectReputation: 9, sectContribution: 2, fortune: 2 },
+      },
+      {
+        id: 'ask-who-erased-it',
+        label: '追问抹去星角的人',
+        summary: '你不肯满足于补图，反而追问是谁把那颗星抹掉。阁中人第一次收起笑意，承认这件事和一场旧叛离有关。',
+        effects: { affinity: 22, techniqueFragments: 2, sectReputation: 5, sectContribution: 5, karma: -1 },
+      },
+    ],
+  },
   'nameless-well-echo': {
     id: 'nameless-well-echo',
     relationshipId: 'nameless-soul',
@@ -302,6 +386,87 @@ export const PERSON_EVENTS: Record<PersonEventId, PersonEventDefinition> = {
         label: '斩断这段回声',
         summary: '你用灵力斩断井壁上的旧痕，回声第一次没有追出来，只留下半句没说完的话。',
         effects: { affinity: -12, mentalState: 5, karma: -1 },
+      },
+    ],
+  },
+  'nameless-well-oath': {
+    id: 'nameless-well-oath',
+    relationshipId: 'nameless-soul',
+    title: '井底的旧誓',
+    eyebrow: 'THE NAMELESS ECHO · 无名残魂',
+    summary: '筑基试炼归来时，井底的回声第一次越过山风找到你。无名残魂想起了一句旧誓：有人曾答应带它离开，却在最后一刻把它留在了井里。',
+    choices: [
+      {
+        id: 'carry-soul-lantern',
+        label: '替它提一盏魂灯',
+        summary: '你把试炼场带回的灵光点进井口。那一点火没有照亮井底，却让回声第一次有了可以跟随的方向。',
+        effects: { affinity: 18, techniqueFragments: 2, mentalState: -4, karma: 1 },
+      },
+      {
+        id: 'ask-for-price',
+        label: '先问它要付什么代价',
+        summary: '你没有立刻答应，只把条件摆在井沿。残魂沉默片刻，吐出一枚旧灵石，像是在承认你们还没有熟到可以只谈情分。',
+        effects: { affinity: 12, spiritStones: -6, fortune: 2 },
+      },
+      {
+        id: 'refuse-old-oath',
+        label: '拒绝替它续誓',
+        summary: '旧誓不是你的誓。你让回声留在井底，自己转身离开，只听见它第一次没有追问你的名字。',
+        effects: { affinity: -10, mentalState: 4, karma: -2 },
+      },
+    ],
+  },
+  'nameless-well-gate': {
+    id: 'nameless-well-gate',
+    relationshipId: 'nameless-soul',
+    title: '井口之外的门',
+    eyebrow: 'THE NAMELESS ECHO · 无名残魂',
+    summary: '残魂说，井底其实没有门，门一直在你们之间。它需要借你的名字推开门缝，而你也终于看见：门后不是出口，是一段被人故意抹去的旧人生。',
+    choices: [
+      {
+        id: 'open-soul-gate',
+        label: '替它推开门缝',
+        summary: '你把神识压进那道门缝，门后的雪声倒灌而来。残魂想起了第一个真正属于自己的画面，也把一缕灵气还给了你。',
+        effects: { affinity: 20, cultivation: 20, karma: 2, mentalState: -5 },
+      },
+      {
+        id: 'leave-the-seal',
+        label: '只留下封门的印记',
+        summary: '你不替它打开未知，只在门沿留下可回头的印记。残魂虽然失望，却第一次接受了你的边界。',
+        effects: { affinity: 8, spiritStones: 20, mentalState: 3 },
+      },
+      {
+        id: 'erase-the-door',
+        label: '抹掉这扇门',
+        summary: '你认定有些旧人生不该被重新唤醒，于是用因果之力擦掉门缝。井底安静下来，但那份安静也像一场诀别。',
+        effects: { affinity: -20, fortune: 2, karma: -3, mentalState: 6 },
+      },
+    ],
+  },
+  'nameless-well-ending': {
+    id: 'nameless-well-ending',
+    relationshipId: 'nameless-soul',
+    title: '给回声一个去处',
+    eyebrow: 'THE NAMELESS ECHO · 无名残魂',
+    summary: '门后的旧人生终于拼出轮廓：残魂曾经也是一个寻找长生的人，只是把自己的名字、同伴和退路都押在了最后一次冲关上。现在，它把选择交还给你。',
+    choices: [
+      {
+        id: 'give-the-soul-a-name',
+        label: '替它写下一个名字',
+        summary: '你没有把自己的名字借给它，而是在长生簿空白处写下一个新的称呼。残魂第一次不再只是回声，井底也落下一场迟来的雪。',
+        effects: { affinity: 25, cultivation: 60, techniqueFragments: 4, karma: 3 },
+      },
+      {
+        id: 'keep-the-soul-nameless',
+        label: '让它继续做无名之魂',
+        summary: '你承认名字并不一定是救赎。残魂留在井底守着自己的旧事，却把多年积攒的灵石推到井沿，作为你们之间不必解释的谢意。',
+        effects: { affinity: 10, spiritStones: 40, mentalState: 5, karma: 1 },
+      },
+      {
+        id: 'sever-the-last-thread',
+        label: '斩断最后一线牵连',
+        summary: '你替它结束这段迟迟不肯散去的牵连。井底的回声归于寂静，而你的影子终于不再比你慢半拍。',
+        effects: { affinity: -30, mentalState: 10, fortune: 3, karma: -3 },
       },
     ],
   },

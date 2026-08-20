@@ -64,7 +64,13 @@ export type PersonEventId =
   | 'xuan-song-lesson'
   | 'xuan-song-mountain-gate'
   | 'nameless-well-soul'
-  | 'nameless-well-echo';
+  | 'nameless-well-echo'
+  | 'nameless-well-oath'
+  | 'nameless-well-gate'
+  | 'nameless-well-ending'
+  | 'qingxiao-sword-trial'
+  | 'baicao-valley-oath'
+  | 'tianji-pavilion-star-chart';
 
 export type SectExchangeId = 'exchange-spirit-stones' | 'exchange-herbs' | 'exchange-technique-fragments';
 

@@ -10,6 +10,7 @@ import {
   getBreakthroughStartError,
   getActionStartError,
   settleGame,
+  resolvePersonEvent,
   startBreakthrough,
   startAction,
   treatInjury,
@@ -136,6 +137,68 @@ describe('settlement rules', () => {
     expect(result.state.inventory.techniqueFragments).toBe(1);
     expect(result.state.character.realm.cultivation).toBe(26);
     expect(result.newEntries[0]?.title).toBe('云外峰场归来');
+  });
+
+  it('continues the nameless soul story across three foundation trials', () => {
+    const state = createGame();
+    state.character.realm.major = 'foundation_establishment';
+    state.social.relationships['nameless-soul'].affinity = 15;
+    state.social.completedPersonEventIds = ['nameless-well-soul', 'nameless-well-echo'];
+
+    const first = settleGame(
+      startAction(state, 'foundation_trial', now, 'qingstone-mountain', undefined, () => 0),
+      now + 45 * MINUTE_MS,
+      () => 0.99,
+    );
+    expect(first.state.social.pendingPersonEvent?.eventId).toBe('nameless-well-oath');
+
+    const oath = resolvePersonEvent(first.state, 'carry-soul-lantern', now + 45 * MINUTE_MS);
+    const second = settleGame(
+      startAction(oath.state, 'foundation_trial', now + 45 * MINUTE_MS, 'qingstone-mountain', undefined, () => 0),
+      now + 90 * MINUTE_MS,
+      () => 0.99,
+    );
+    expect(second.state.social.pendingPersonEvent?.eventId).toBe('nameless-well-gate');
+
+    const gate = resolvePersonEvent(second.state, 'open-soul-gate', now + 90 * MINUTE_MS);
+    const third = settleGame(
+      startAction(gate.state, 'foundation_trial', now + 90 * MINUTE_MS, 'qingstone-mountain', undefined, () => 0),
+      now + 135 * MINUTE_MS,
+      () => 0.99,
+    );
+    expect(third.state.social.pendingPersonEvent?.eventId).toBe('nameless-well-ending');
+
+    const ending = resolvePersonEvent(third.state, 'give-the-soul-a-name', now + 135 * MINUTE_MS);
+    expect(ending.error).toBeUndefined();
+    expect(ending.state.social.completedPersonEventIds).toContain('nameless-well-ending');
+    expect(ending.state.inventory.techniqueFragments).toBe(12);
+    expect(ending.state.character.realm.cultivation).toBe(158);
+    expect(ending.newEntries[0]?.title).toContain('替它写下一个名字');
+  });
+
+  it('opens a different sect story after the first follow-up mission', () => {
+    const cases = [
+      { sectId: 'qingxiao-sword-sect' as const, missionId: 'qingxiao-patrol' as const, eventId: 'qingxiao-sword-trial' as const, choiceId: 'guard-the-sword-blank' },
+      { sectId: 'baicao-valley' as const, missionId: 'baicao-gathering' as const, eventId: 'baicao-valley-oath' as const, choiceId: 'record-the-medicine' },
+      { sectId: 'tianji-pavilion' as const, missionId: 'tianji-star-chart' as const, eventId: 'tianji-pavilion-star-chart' as const, choiceId: 'leave-the-blank' },
+    ];
+
+    for (const testCase of cases) {
+      const state = createGame();
+      state.social.sect.sectId = testCase.sectId;
+      state.social.relationships['xuan-song'].affinity = 20;
+      state.social.completedPersonEventIds = ['xuan-song-lesson', 'xuan-song-mountain-gate'];
+      const settled = settleGame(
+        startAction(state, 'sect_mission', now, 'qingstone-mountain', testCase.missionId, () => 0),
+        now + 120 * MINUTE_MS,
+        () => 0.99,
+      );
+
+      expect(settled.state.social.pendingPersonEvent?.eventId).toBe(testCase.eventId);
+      const resolved = resolvePersonEvent(settled.state, testCase.choiceId, now + 120 * MINUTE_MS);
+      expect(resolved.error).toBeUndefined();
+      expect(resolved.newEntries[0]?.tags.some((tag) => tag.startsWith('宗门贡献'))).toBe(true);
+    }
   });
 
   it('rejects breakthrough preparation without enough spirit stones', () => {
