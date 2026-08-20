@@ -38,6 +38,8 @@ import type {
   ExplorationLocationId,
   GameState,
   LedgerEntry,
+  LegacyState,
+  LifeSummary,
   SectId,
   SectExchangeId,
   SectMissionId,
@@ -50,6 +52,7 @@ import {
   loadGame,
   parseSaveFile,
   saveGame,
+  startNextLife,
 } from './game/save';
 import {
   collectCave,
@@ -120,6 +123,15 @@ const App = () => {
     const next = createNewGame(name, [talent.id]);
     saveGame(next);
     setGame(next);
+  };
+
+  const handleNextLife = (name: string, talent: Talent) => {
+    if (!game || game.lifeStatus !== 'dead') return;
+    const next = startNextLife(game, name, [talent.id], Date.now());
+    saveGame(next);
+    setGame(next);
+    setNotice(next.ledger.slice(0, 1));
+    setErrorMessage('');
   };
 
   const handleStartAction = (type: ActionType, locationId?: ExplorationLocationId) => {
@@ -285,6 +297,16 @@ const App = () => {
     return <CreateCharacter onCreate={handleCreate} />;
   }
 
+  if (game.lifeStatus === 'dead' && game.lifeSummary) {
+    return (
+      <LifeEndView
+        summary={game.lifeSummary}
+        legacy={game.legacy}
+        onCreate={handleNextLife}
+      />
+    );
+  }
+
   const unreadCount = game.ledger.filter((entry) => !entry.read).length;
   const cultivationRatio = Math.min(
     100,
@@ -325,7 +347,7 @@ const App = () => {
             <div className="eyebrow">CURRENT LIFE · 本世</div>
             <div className="character-name">{game.character.name}</div>
             <div className="realm-name">{formatRealm(game.character.realm.major, game.character.realm.stage)}</div>
-            <div className="age-line">{formatAge(game.character.ageDays)} · 寿元 {Math.floor(game.character.lifespanDays / 365)} 年</div>
+            <div className="age-line">{formatAge(game.character.ageDays)} · 寿元余 {Math.max(0, Math.floor((game.character.lifespanDays - game.character.ageDays) / 365))} 年</div>
 
             <div className="cultivation-progress">
               <div className="progress-label">
@@ -508,6 +530,87 @@ const CreateCharacter = ({ onCreate }: { onCreate: (name: string, talent: Talent
           落笔，开始这一世 <span>→</span>
         </button>
         <div className="onboarding-footnote">本版本使用浏览器本地存档 · 默认静音 · 随时可以导出备份</div>
+      </section>
+    </div>
+  );
+};
+
+const deathReasonLabel = (reason: LifeSummary['deathReason']) => {
+  if (reason === 'lifespan_exhausted') return '寿元耗尽';
+  return '本世终结';
+};
+
+const LifeEndView = ({ summary, legacy, onCreate }: {
+  summary: LifeSummary;
+  legacy: LegacyState;
+  onCreate: (name: string, talent: Talent) => void;
+}) => {
+  const [name, setName] = useState(`${summary.characterName}·续`);
+  const [talentOptions] = useState(() => shuffle(TALENTS).slice(0, 3));
+  const [selectedTalentId, setSelectedTalentId] = useState(talentOptions[0].id);
+  const selectedTalent = talentOptions.find((talent) => talent.id === selectedTalentId) ?? talentOptions[0];
+
+  return (
+    <div className="onboarding-shell life-end-shell">
+      <section className="onboarding-card life-end-card paper-card">
+        <div className="large-seal">终章</div>
+        <div className="eyebrow">THE LAST PAGE · 本世终章</div>
+        <h1>{summary.characterName} 的一世已尽</h1>
+        <p className="intro-copy">{deathReasonLabel(summary.deathReason)}。这一页已经合上，但你走过的路没有消失，它们会成为下一世仍然存在的微光。</p>
+
+        <div className="life-summary-grid">
+          <div><span>本世</span><strong>第 {summary.lifeNumber} 世</strong></div>
+          <div><span>终结时</span><strong>{formatAge(summary.ageDays)}</strong></div>
+          <div><span>最终境界</span><strong>{formatRealm(summary.realm.major, summary.realm.stage)}</strong></div>
+          <div><span>探索</span><strong>{summary.discoveredLocationCount} 处</strong></div>
+          <div><span>人物</span><strong>{summary.discoveredRelationshipCount} 人</strong></div>
+          <div><span>宗门</span><strong>{summary.sectId ? '曾入门墙' : '散修'}</strong></div>
+        </div>
+
+        <div className="life-summary-events">
+          <div className="section-heading"><span>这一世留下的墨迹</span><span className="muted">重要记录</span></div>
+          {summary.keyEvents.length > 0 ? (
+            <div className="life-event-list">{summary.keyEvents.map((event) => <span key={event}>{event}</span>)}</div>
+          ) : (
+            <p>这一世没有留下额外的关键事件，但长生簿仍记得你曾经开始过。</p>
+          )}
+        </div>
+
+        <div className="legacy-box">
+          <strong>前世遗泽</strong>
+          <span>已发现地点 {legacy.discoveredLocations.length} 处 · 带回功法残页 {legacy.techniqueFragments} 页 · 历世记录 {legacy.lifeCount} 世</span>
+        </div>
+
+        <div className="next-life-heading">
+          <div className="eyebrow">THE NEXT PAGE · 下一世</div>
+          <h2>重新落笔</h2>
+        </div>
+        <label className="field-label" htmlFor="next-life-name">为下一世留下名字</label>
+        <input
+          id="next-life-name"
+          className="name-input"
+          value={name}
+          maxLength={12}
+          onChange={(event) => setName(event.target.value)}
+          placeholder="请输入角色名"
+        />
+        <div className="field-label talent-label">选择下一世的先天天赋</div>
+        <div className="talent-options">
+          {talentOptions.map((talent) => (
+            <button
+              key={talent.id}
+              className={`talent-option ${selectedTalentId === talent.id ? 'selected' : ''}`}
+              onClick={() => setSelectedTalentId(talent.id)}
+            >
+              <span className="option-radio">{selectedTalentId === talent.id ? '●' : '○'}</span>
+              <span><strong>{talent.name}</strong><small>{talent.summary}</small></span>
+            </button>
+          ))}
+        </div>
+        <div className="selected-effect">天赋：{selectedTalent.effect}</div>
+        <button className="primary-button begin-button" onClick={() => onCreate(name, selectedTalent)}>
+          翻开下一页 <span>→</span>
+        </button>
       </section>
     </div>
   );

@@ -10,14 +10,76 @@ import {
 } from './techniques';
 import type {
   CultivationSchoolId,
+  DeathReason,
   ExplorationEventId,
   ExplorationLocationId,
   GameState,
   LedgerEntry,
+  LegacyState,
+  LifeSummary,
   PersonEventId,
+  Realm,
 } from './types';
 
 const createId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+const LOCATION_IDS: ExplorationLocationId[] = [
+  'qingstone-mountain',
+  'blackwind-valley',
+  'nameless-well',
+];
+
+const isExplorationLocationId = (locationId: unknown): locationId is ExplorationLocationId =>
+  typeof locationId === 'string' && LOCATION_IDS.includes(locationId as ExplorationLocationId);
+
+export const createLegacyState = (): LegacyState => ({
+  lifeCount: 0,
+  discoveredLocations: [],
+  techniqueFragments: 0,
+  previousLifeNames: [],
+});
+
+const normalizeLegacyState = (input?: Partial<LegacyState>): LegacyState => ({
+  lifeCount: Math.max(0, Number(input?.lifeCount) || 0),
+  discoveredLocations: Array.from(new Set(
+    (Array.isArray(input?.discoveredLocations) ? input.discoveredLocations : []).filter(
+      isExplorationLocationId,
+    ),
+  )),
+  techniqueFragments: Math.max(0, Math.min(3, Number(input?.techniqueFragments) || 0)),
+  previousLifeNames: (Array.isArray(input?.previousLifeNames) ? input.previousLifeNames : [])
+    .filter((name): name is string => typeof name === 'string' && name.trim().length > 0)
+    .slice(-20),
+});
+
+const normalizeRealm = (input?: Partial<Realm>): Realm => ({
+  major: input?.major === 'foundation_establishment' ? 'foundation_establishment' : 'qi_refining',
+  stage: Math.max(1, Math.min(12, Number(input?.stage) || 1)),
+  cultivation: Math.max(0, Number(input?.cultivation) || 0),
+  cultivationRequired: Math.max(1, Number(input?.cultivationRequired) || 100),
+});
+
+const normalizeLifeSummary = (input?: Partial<LifeSummary>): LifeSummary | null => {
+  if (!input) return null;
+  const deathReason: DeathReason = input.deathReason === 'lifespan_exhausted'
+    ? input.deathReason
+    : 'lifespan_exhausted';
+  return {
+    lifeNumber: Math.max(1, Number(input.lifeNumber) || 1),
+    characterName: String(input.characterName || '无名'),
+    deathReason,
+    endedAt: Number(input.endedAt) || Date.now(),
+    ageDays: Math.max(0, Number(input.ageDays) || 0),
+    lifespanDays: Math.max(1, Number(input.lifespanDays) || 1),
+    realm: normalizeRealm(input.realm),
+    discoveredLocationCount: Math.max(0, Number(input.discoveredLocationCount) || 0),
+    discoveredRelationshipCount: Math.max(0, Number(input.discoveredRelationshipCount) || 0),
+    sectId: input.sectId && input.sectId in SECTS ? input.sectId : null,
+    keyEvents: (Array.isArray(input.keyEvents) ? input.keyEvents : [])
+      .filter((event): event is string => typeof event === 'string')
+      .slice(0, 8),
+  };
+};
 
 export const createLedgerEntry = (
   category: LedgerEntry['category'],
@@ -35,14 +97,46 @@ export const createLedgerEntry = (
   read: false,
 });
 
-export const createNewGame = (name: string, talentIds: string[]): GameState => {
+export const createNewGame = (
+  name: string,
+  talentIds: string[],
+  legacyInput: LegacyState = createLegacyState(),
+  pastLives: LifeSummary[] = [],
+  now = Date.now(),
+): GameState => {
   const selectedTalents = talentIds
     .map((id) => TALENTS.find((talent) => talent.id === id))
     .filter((talent): talent is (typeof TALENTS)[number] => Boolean(talent));
-  const now = Date.now();
+  const legacy = normalizeLegacyState(legacyInput);
+  const discoveredLocations = Array.from(new Set([
+    'qingstone-mountain' as const,
+    ...legacy.discoveredLocations,
+  ]));
+  const openingEntry = legacy.lifeCount > 0
+    ? createLedgerEntry(
+      'system',
+      '轮回初页',
+      `你带着前世留下的一点微光重新落笔。这是第 ${legacy.lifeCount + 1} 世，长生簿仍记得你曾走过的路。`,
+      ['轮回', `第${legacy.lifeCount + 1}世`],
+      now,
+    )
+    : createLedgerEntry(
+      'system',
+      '长生簿初页',
+      '你的名字落在一页尚未干透的墨迹上。此后每一次呼吸、每一个选择，都会成为这本簿册中的一行小字。',
+      ['开始', '命运'],
+      now,
+    );
 
   return {
-    schemaVersion: 6,
+    schemaVersion: 7,
+    lifeStatus: 'alive',
+    lifeSummary: null,
+    pastLives: pastLives
+      .map((summary) => normalizeLifeSummary(summary))
+      .filter((summary): summary is LifeSummary => Boolean(summary))
+      .slice(-20),
+    legacy,
     lastSettledAt: now,
     character: {
       id: createId(),
@@ -70,23 +164,15 @@ export const createNewGame = (name: string, talentIds: string[]): GameState => {
     inventory: {
       spiritStones: 30,
       herbs: 3,
-      techniqueFragments: 0,
+      techniqueFragments: legacy.techniqueFragments,
     },
     cave: createCave(now),
     cultivationPath: createCultivationPath(),
     social: createSocialState(),
     pendingExplorationEvent: null,
     completedExplorationEventIds: [],
-    discoveredLocations: ['qingstone-mountain'],
-    ledger: [
-      createLedgerEntry(
-        'system',
-        '长生簿初页',
-        '你的名字落在一页尚未干透的墨迹上。此后每一次呼吸、每一个选择，都会成为这本簿册中的一行小字。',
-        ['开始', '命运'],
-        now,
-      ),
-    ],
+    discoveredLocations,
+    ledger: [openingEntry],
   };
 };
 
@@ -96,12 +182,25 @@ const hasCompletedExploration = (state: GameState) =>
 export const normalizeGameState = (input: GameState): GameState => {
   const state = structuredClone(input);
   const now = Date.now();
+  state.lifeStatus = input.lifeStatus === 'dead' ? 'dead' : 'alive';
+  state.lifeSummary = normalizeLifeSummary(input.lifeSummary ?? undefined);
+  state.pastLives = (Array.isArray(input.pastLives) ? input.pastLives : [])
+    .map((summary) => normalizeLifeSummary(summary))
+    .filter((summary): summary is LifeSummary => Boolean(summary))
+    .slice(-20);
+  state.legacy = normalizeLegacyState(input.legacy);
+  if (state.lifeStatus === 'dead' && !state.lifeSummary) {
+    state.lifeStatus = 'alive';
+  }
+  if (state.lifeStatus === 'dead') {
+    state.character.currentAction = null;
+  }
   const legacyCave = input.cave;
   const shouldUnlockCave = Boolean(legacyCave?.unlocked || hasCompletedExploration(state));
   const initialCave = createCave(now, shouldUnlockCave);
   const cave = legacyCave ?? initialCave;
 
-  state.schemaVersion = Math.max(6, Number(state.schemaVersion) || 1);
+  state.schemaVersion = Math.max(7, Number(state.schemaVersion) || 1);
   state.cave = {
     ...initialCave,
     ...cave,
@@ -245,6 +344,10 @@ export const normalizeGameState = (input: GameState): GameState => {
     discovered.add('nameless-well');
   }
   state.discoveredLocations = [...discovered];
+  state.legacy.discoveredLocations = Array.from(new Set([
+    ...state.legacy.discoveredLocations,
+    ...state.discoveredLocations,
+  ])).filter(isExplorationLocationId);
   return state;
 };
 
@@ -263,6 +366,17 @@ export const loadGame = (): GameState | null => {
 
 export const saveGame = (state: GameState) => {
   localStorage.setItem(SAVE_KEY, JSON.stringify(state));
+};
+
+export const startNextLife = (
+  input: GameState,
+  name: string,
+  talentIds: string[],
+  now = Date.now(),
+): GameState => {
+  const state = normalizeGameState(input);
+  if (state.lifeStatus !== 'dead') return state;
+  return createNewGame(name, talentIds, state.legacy, state.pastLives, now);
 };
 
 export const clearGame = () => {

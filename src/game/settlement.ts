@@ -43,6 +43,7 @@ import type {
   ExplorationLocationId,
   GameState,
   LedgerEntry,
+  LifeSummary,
   PersonEventId,
   SectId,
   SectExchangeId,
@@ -142,6 +143,62 @@ const randomInt = (min: number, max: number) =>
   Math.floor(Math.random() * (max - min + 1)) + min;
 
 const pick = <T,>(items: readonly T[]) => items[Math.floor(Math.random() * items.length)];
+
+const endLife = (
+  state: GameState,
+  deathReason: LifeSummary['deathReason'],
+  endedAt: number,
+): LedgerEntry => {
+  const character = state.character;
+  const lifeNumber = Math.max(state.legacy?.lifeCount ?? 0, state.pastLives?.length ?? 0) + 1;
+  const summary: LifeSummary = {
+    lifeNumber,
+    characterName: character.name,
+    deathReason,
+    endedAt,
+    ageDays: character.ageDays,
+    lifespanDays: character.lifespanDays,
+    realm: structuredClone(character.realm),
+    discoveredLocationCount: state.discoveredLocations.length,
+    discoveredRelationshipCount: Object.values(state.social.relationships)
+      .filter((relationship) => relationship.discovered).length,
+    sectId: state.social.sect.sectId,
+    keyEvents: state.ledger
+      .filter((entry) => ['breakthrough', 'exploration', 'relationship'].includes(entry.category))
+      .slice(0, 8)
+      .map((entry) => entry.title),
+  };
+
+  state.lifeStatus = 'dead';
+  state.lifeSummary = summary;
+  state.pastLives = [...(state.pastLives ?? []), summary].slice(-20);
+  state.legacy = {
+    lifeCount: lifeNumber,
+    discoveredLocations: Array.from(new Set([
+      ...(state.legacy?.discoveredLocations ?? []),
+      ...state.discoveredLocations.filter(
+        (locationId): locationId is ExplorationLocationId =>
+          locationId === 'qingstone-mountain' ||
+          locationId === 'blackwind-valley' ||
+          locationId === 'nameless-well',
+      ),
+    ])),
+    techniqueFragments: Math.min(3, Math.max(0, state.inventory.techniqueFragments)),
+    previousLifeNames: [...(state.legacy?.previousLifeNames ?? []), character.name].slice(-20),
+  };
+  character.currentAction = null;
+  state.pendingExplorationEvent = null;
+  state.social.pendingPersonEvent = null;
+
+  const ageYears = Math.floor(character.ageDays / 365);
+  return createLedgerEntry(
+    'death',
+    '本世终章',
+    `${character.name}在${ageYears}岁时走完了这一世。长生簿合上最后一页，却替你保留了这段人生走过的山河与名字。`,
+    ['终章', '寿元耗尽', `第${lifeNumber}世`],
+    endedAt,
+  );
+};
 
 const MEDITATE_RESULTS = [
   '窗纸外的天色换了几回，你始终守着一口气。灵气没有喧宾夺主，却在经脉深处留下了细细的暖意。',
@@ -520,6 +577,17 @@ const actionResult = (state: GameState, actionType: ActionType, completedAt: num
 
 export const settleGame = (input: GameState, now = Date.now()): SettlementResult => {
   const state = structuredClone(input);
+  state.lifeStatus = state.lifeStatus ?? 'alive';
+  state.pastLives = state.pastLives ?? [];
+  state.legacy = state.legacy ?? {
+    lifeCount: state.pastLives.length,
+    discoveredLocations: [],
+    techniqueFragments: 0,
+    previousLifeNames: [],
+  };
+  if (state.lifeStatus === 'dead') {
+    return { state, newEntries: [] };
+  }
   state.cultivationPath = state.cultivationPath ?? createCultivationPath();
   state.social = state.social ?? createSocialState();
   state.pendingExplorationEvent = state.pendingExplorationEvent ?? null;
@@ -572,57 +640,64 @@ export const settleGame = (input: GameState, now = Date.now()): SettlementResult
     if (state.social.sect.sectId) {
       state.social.sect.contribution += 1;
     }
-    const personEvent = getNextPersonEvent(state, completedAction);
-    if (personEvent) {
-      state.social.pendingPersonEvent = {
-        eventId: personEvent.id,
-        createdAt: completedAction.endsAt,
-      };
-      state.social.relationships[personEvent.relationshipId].discovered = true;
-      newEntries.push(
-        createLedgerEntry(
-          'relationship',
-          `人物事件：${personEvent.title}`,
-          personEvent.summary,
-          ['待处理', personEvent.eyebrow],
-          completedAction.endsAt,
-        ),
-      );
-    }
-    const explorationEvent = !personEvent && !state.social.pendingPersonEvent
-      ? getNextExplorationEvent(state, completedAction)
-      : null;
-    if (explorationEvent) {
-      state.pendingExplorationEvent = {
-        eventId: explorationEvent.id,
-        createdAt: completedAction.endsAt,
-      };
-      newEntries.push(
-        createLedgerEntry(
-          'exploration',
-          `探索抉择：${explorationEvent.title}`,
-          explorationEvent.summary,
-          ['待处理', explorationEvent.eyebrow],
-          completedAction.endsAt,
-        ),
-      );
-    }
-    if (
-      completedAction.type === 'explore' &&
-      !state.cave.unlocked
-    ) {
-      state.cave = createCave(completedAction.endsAt, true);
-      newEntries.push(
-        createLedgerEntry(
-          'action',
-          pick(['寻得一处归处', '石窟初成', '洞府终于有门了']),
-          pick(CAVE_UNLOCK_RESULTS),
-          ['洞府解锁', '可建造'],
-          completedAction.endsAt,
-        ),
-      );
-    }
     state.character.currentAction = null;
+
+    if (state.character.ageDays < state.character.lifespanDays) {
+      const personEvent = getNextPersonEvent(state, completedAction);
+      if (personEvent) {
+        state.social.pendingPersonEvent = {
+          eventId: personEvent.id,
+          createdAt: completedAction.endsAt,
+        };
+        state.social.relationships[personEvent.relationshipId].discovered = true;
+        newEntries.push(
+          createLedgerEntry(
+            'relationship',
+            `人物事件：${personEvent.title}`,
+            personEvent.summary,
+            ['待处理', personEvent.eyebrow],
+            completedAction.endsAt,
+          ),
+        );
+      }
+      const explorationEvent = !personEvent && !state.social.pendingPersonEvent
+        ? getNextExplorationEvent(state, completedAction)
+        : null;
+      if (explorationEvent) {
+        state.pendingExplorationEvent = {
+          eventId: explorationEvent.id,
+          createdAt: completedAction.endsAt,
+        };
+        newEntries.push(
+          createLedgerEntry(
+            'exploration',
+            `探索抉择：${explorationEvent.title}`,
+            explorationEvent.summary,
+            ['待处理', explorationEvent.eyebrow],
+            completedAction.endsAt,
+          ),
+        );
+      }
+      if (
+        completedAction.type === 'explore' &&
+        !state.cave.unlocked
+      ) {
+        state.cave = createCave(completedAction.endsAt, true);
+        newEntries.push(
+          createLedgerEntry(
+            'action',
+            pick(['寻得一处归处', '石窟初成', '洞府终于有门了']),
+            pick(CAVE_UNLOCK_RESULTS),
+            ['洞府解锁', '可建造'],
+            completedAction.endsAt,
+          ),
+        );
+      }
+    }
+  }
+
+  if (state.character.ageDays >= state.character.lifespanDays) {
+    newEntries.push(endLife(state, 'lifespan_exhausted', now));
   }
 
   state.lastSettledAt = now;

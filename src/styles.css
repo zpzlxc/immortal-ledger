@@ -342,6 +342,25 @@ button:disabled { cursor: not-allowed; }
 .onboarding-decor { position: absolute; color: rgba(159,67,53,.17); font-size: 55px; writing-mode: vertical-rl; letter-spacing: 10px; }
 .top-left { top: 12%; left: 8%; }
 .bottom-right { bottom: 9%; right: 8%; }
+.life-end-shell { overflow: auto; }
+.life-end-card { text-align: left; }
+.life-end-card .large-seal { text-align: center; }
+.life-end-card h1 { text-align: center; }
+.life-end-card > .intro-copy { text-align: center; }
+.life-summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; margin: 24px 0 17px; border: 1px solid #dfd4c3; background: #dfd4c3; }
+.life-summary-grid div { display: flex; flex-direction: column; gap: 5px; padding: 11px 12px; background: #fcf8f0; }
+.life-summary-grid span { color: var(--muted); font-size: 10px; }
+.life-summary-grid strong { color: var(--ink); font-size: 13px; font-weight: 600; }
+.life-summary-events { padding: 14px; background: rgba(248,242,232,.45); border: 1px solid #dfd4c3; }
+.life-summary-events .section-heading { margin-bottom: 8px; }
+.life-summary-events p { color: var(--muted); font-size: 11px; line-height: 1.7; margin: 0; }
+.life-event-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.life-event-list span { color: var(--red); background: #f3e8d8; padding: 5px 8px; font-size: 10px; }
+.legacy-box { display: flex; flex-direction: column; gap: 5px; margin-top: 12px; padding: 13px 14px; color: #53634b; background: #edf0e7; border: 1px solid #d3dbc8; }
+.legacy-box strong { font-size: 12px; font-weight: 600; }
+.legacy-box span { color: #6f7965; font-size: 10px; line-height: 1.6; }
+.next-life-heading { margin-top: 25px; text-align: center; }
+.next-life-heading h2 { color: var(--ink); font-size: 20px; font-weight: 500; letter-spacing: 3px; margin: 8px 0 0; }
 
 @media (max-width: 900px) {
   html, body, #root { height: auto; }
@@ -395,4 +414,5 @@ button:disabled { cursor: not-allowed; }
   .coming-soon { display: none; }
   .onboarding-card { padding: 35px 25px 28px; }
   .onboarding-decor { display: none; }
+  .life-summary-grid { grid-template-columns: repeat(2, 1fr); }
 }

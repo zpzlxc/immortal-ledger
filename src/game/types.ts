@@ -130,6 +130,31 @@ export type Character = {
   currentAction: CurrentAction | null;
 };
 
+export type LifeStatus = 'alive' | 'dead';
+
+export type DeathReason = 'lifespan_exhausted';
+
+export type LifeSummary = {
+  lifeNumber: number;
+  characterName: string;
+  deathReason: DeathReason;
+  endedAt: number;
+  ageDays: number;
+  lifespanDays: number;
+  realm: Realm;
+  discoveredLocationCount: number;
+  discoveredRelationshipCount: number;
+  sectId: SectId | null;
+  keyEvents: string[];
+};
+
+export type LegacyState = {
+  lifeCount: number;
+  discoveredLocations: ExplorationLocationId[];
+  techniqueFragments: number;
+  previousLifeNames: string[];
+};
+
 export type LedgerEntry = {
   id: string;
   createdAt: number;
@@ -164,6 +189,10 @@ export type CaveState = {
 
 export type GameState = {
   schemaVersion: number;
+  lifeStatus: LifeStatus;
+  lifeSummary: LifeSummary | null;
+  pastLives: LifeSummary[];
+  legacy: LegacyState;
   lastSettledAt: number;
   character: Character;
   inventory: Inventory;
