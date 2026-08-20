@@ -1,6 +1,19 @@
-export type ActionType = 'meditate' | 'overdrive' | 'explore' | 'study' | 'sect_mission';
+export type ActionType = 'meditate' | 'temper' | 'insight' | 'overdrive' | 'explore' | 'study' | 'sect_mission';
 
 export type ExplorationLocationId = 'qingstone-mountain' | 'blackwind-valley' | 'nameless-well';
+
+export type ExplorationEventId =
+  | 'qingstone-red-bell'
+  | 'qingstone-fox-path'
+  | 'blackwind-broken-stele'
+  | 'blackwind-ghost-lantern'
+  | 'nameless-reversed-name'
+  | 'nameless-empty-lantern';
+
+export type PendingExplorationEvent = {
+  eventId: ExplorationEventId;
+  createdAt: number;
+};
 
 export type CultivationSchoolId = 'sword' | 'alchemy' | 'formation' | 'soul';
 export type TechniqueId = 'wind-chasing-sword' | 'hundred-herbs-canon' | 'star-pattern-manual' | 'guarding-one-meditation';
@@ -157,6 +170,8 @@ export type GameState = {
   cave: CaveState;
   cultivationPath: CultivationPathState;
   social: SocialState;
+  pendingExplorationEvent: PendingExplorationEvent | null;
+  completedExplorationEventIds: ExplorationEventId[];
   ledger: LedgerEntry[];
   discoveredLocations: string[];
 };

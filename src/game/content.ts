@@ -56,6 +56,20 @@ export const ACTIONS: Record<
     description: '循着周天缓慢搬运灵气，稳妥地积累修为。',
     risk: '风险：极低',
   },
+  temper: {
+    label: '淬体炼骨',
+    icon: '骨',
+    durationMinutes: 15,
+    description: '借灵草和灵气反复淬炼根骨，让身体先成为能承载大道的器物。',
+    risk: '风险：有灵草时效果更好，无灵草也可勉强磨脉',
+  },
+  insight: {
+    label: '静观参悟',
+    icon: '悟',
+    durationMinutes: 12,
+    description: '暂时放下对修为的追赶，梳理心念、功法与神识之间的细微联系。',
+    risk: '风险：修为收益较少，偏向心境、悟性与神识',
+  },
   overdrive: {
     label: '极限运功',
     icon: '✦',

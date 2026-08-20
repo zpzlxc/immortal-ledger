@@ -1,5 +1,6 @@
 import { SAVE_KEY, TALENTS } from './content';
 import { createCave } from './cave';
+import { EXPLORATION_EVENTS } from './exploration';
 import { createSocialState, PERSON_EVENTS, RELATIONSHIPS, SECTS, getRelationshipStatus } from './people';
 import {
   createCultivationPath,
@@ -9,6 +10,7 @@ import {
 } from './techniques';
 import type {
   CultivationSchoolId,
+  ExplorationEventId,
   ExplorationLocationId,
   GameState,
   LedgerEntry,
@@ -40,7 +42,7 @@ export const createNewGame = (name: string, talentIds: string[]): GameState => {
   const now = Date.now();
 
   return {
-    schemaVersion: 5,
+    schemaVersion: 6,
     lastSettledAt: now,
     character: {
       id: createId(),
@@ -73,6 +75,8 @@ export const createNewGame = (name: string, talentIds: string[]): GameState => {
     cave: createCave(now),
     cultivationPath: createCultivationPath(),
     social: createSocialState(),
+    pendingExplorationEvent: null,
+    completedExplorationEventIds: [],
     discoveredLocations: ['qingstone-mountain'],
     ledger: [
       createLedgerEntry(
@@ -97,7 +101,7 @@ export const normalizeGameState = (input: GameState): GameState => {
   const initialCave = createCave(now, shouldUnlockCave);
   const cave = legacyCave ?? initialCave;
 
-  state.schemaVersion = Math.max(5, Number(state.schemaVersion) || 1);
+  state.schemaVersion = Math.max(6, Number(state.schemaVersion) || 1);
   state.cave = {
     ...initialCave,
     ...cave,
@@ -206,6 +210,22 @@ export const normalizeGameState = (input: GameState): GameState => {
   if (state.social.pendingPersonEvent) {
     state.social.pendingPersonEvent.createdAt = Number(state.social.pendingPersonEvent.createdAt) || now;
   }
+
+  state.pendingExplorationEvent = input.pendingExplorationEvent ?? null;
+  if (
+    state.pendingExplorationEvent &&
+    !(state.pendingExplorationEvent.eventId in EXPLORATION_EVENTS)
+  ) {
+    state.pendingExplorationEvent = null;
+  }
+  if (state.pendingExplorationEvent) {
+    state.pendingExplorationEvent.createdAt = Number(state.pendingExplorationEvent.createdAt) || now;
+  }
+  state.completedExplorationEventIds = Array.isArray(input.completedExplorationEventIds)
+    ? input.completedExplorationEventIds.filter(
+      (eventId): eventId is ExplorationEventId => eventId in EXPLORATION_EVENTS,
+    )
+    : [];
 
   const discovered = new Set<ExplorationLocationId>(
     (state.discoveredLocations ?? []).filter(

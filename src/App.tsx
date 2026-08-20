@@ -14,7 +14,7 @@ import {
   getCaveEffects,
   getUpgradeCost,
 } from './game/cave';
-import { EXPLORATION_LOCATIONS } from './game/exploration';
+import { EXPLORATION_LOCATIONS, getExplorationEvent } from './game/exploration';
 import {
   getPersonEvent,
   getSectEffects,
@@ -57,6 +57,7 @@ import {
   exchangeSectReputation,
   joinSect,
   researchTechniqueBranch,
+  resolveExplorationEvent,
   resolvePersonEvent,
   settleGame,
   startSectMission,
@@ -123,6 +124,10 @@ const App = () => {
 
   const handleStartAction = (type: ActionType, locationId?: ExplorationLocationId) => {
     if (!game || game.character.currentAction) return;
+    if (game.pendingExplorationEvent || game.social.pendingPersonEvent) {
+      setErrorMessage('请先处理眼前的事件，再安排下一项行动。');
+      return;
+    }
     setErrorMessage('');
     const settled = settleGame(game, Date.now());
     const next = startAction(
@@ -168,6 +173,16 @@ const App = () => {
     if (!game) return;
     const settled = settleGame(game, Date.now());
     const result = resolvePersonEvent(settled.state, choiceId, Date.now());
+    saveGame(result.state);
+    setGame(result.state);
+    setErrorMessage(result.error ?? '');
+    setNotice([...settled.newEntries, ...result.newEntries]);
+  };
+
+  const handleResolveExplorationEvent = (choiceId: string) => {
+    if (!game) return;
+    const settled = settleGame(game, Date.now());
+    const result = resolveExplorationEvent(settled.state, choiceId, Date.now());
     saveGame(result.state);
     setGame(result.state);
     setErrorMessage(result.error ?? '');
@@ -355,7 +370,7 @@ const App = () => {
             <TabButton active={activeTab === 'ledger'} onClick={() => setActiveTab('ledger')} label="长生簿" badge={unreadCount} />
             <TabButton active={activeTab === 'cultivation'} onClick={() => setActiveTab('cultivation')} label="修炼" />
             <TabButton active={activeTab === 'technique'} onClick={() => setActiveTab('technique')} label="功法" />
-            <TabButton active={activeTab === 'exploration'} onClick={() => setActiveTab('exploration')} label="探索" />
+            <TabButton active={activeTab === 'exploration'} onClick={() => setActiveTab('exploration')} label="探索" badge={game.pendingExplorationEvent ? 1 : undefined} />
             <TabButton active={activeTab === 'people'} onClick={() => setActiveTab('people')} label="人物" badge={game.social.pendingPersonEvent ? 1 : undefined} />
             <TabButton active={activeTab === 'cave'} onClick={() => setActiveTab('cave')} label="洞府" />
             <TabButton active={activeTab === 'codex'} onClick={() => setActiveTab('codex')} label="图鉴" />
@@ -387,6 +402,8 @@ const App = () => {
               now={now}
               cave={game.cave}
               sectId={game.social.sect.sectId}
+              attributes={game.character.attributes}
+              cultivationPath={game.cultivationPath}
               canBreakthrough={canBreakthrough}
               onStart={handleStartAction}
               onBreakthrough={handleBreakthrough}
@@ -412,9 +429,11 @@ const App = () => {
               cave={game.cave}
               sectId={game.social.sect.sectId}
               discoveredLocations={game.discoveredLocations}
+              pendingEvent={game.pendingExplorationEvent ? getExplorationEvent(game.pendingExplorationEvent.eventId) : null}
               selectedLocationId={selectedExplorationLocationId}
               onLocationChange={setSelectedExplorationLocationId}
               onStart={handleStartAction}
+              onResolveEvent={handleResolveExplorationEvent}
             />
           )}
           {activeTab === 'cave' && (
@@ -626,20 +645,79 @@ const ActionOption = ({ type, currentAction, cave, sectId, selectedLocationId, o
   );
 };
 
-const CultivationView = ({ currentAction, now, cave, sectId, canBreakthrough, onStart, onBreakthrough }: {
+const CULTIVATION_NOTES = [
+  '修为是一条河，根骨是河床，心境则决定你能不能听见水流真正的方向。',
+  '今天不必追求异象。把每一口气送到该去的地方，也是一种难得的进境。',
+  '真正可靠的修士，知道什么时候向前，什么时候把散乱的念头收回自己身上。',
+  '功法不是替你做决定的答案，而是一盏灯：最后要走哪条路，仍然要由你落脚。',
+];
+
+const CultivationPulse = ({ attributes, cultivationPath, currentAction, canBreakthrough }: {
+  attributes: GameState['character']['attributes'];
+  cultivationPath: GameState['cultivationPath'];
+  currentAction: GameState['character']['currentAction'];
+  canBreakthrough: boolean;
+}) => {
+  const mentalState = attributes.mentalState;
+  const mentalStatus = mentalState < 40
+    ? { label: '心神微乱', detail: '先收拢念头，再追赶修为。' }
+    : mentalState < 70
+      ? { label: '心境可用', detail: '可以稳步修炼，也可以小试险招。' }
+      : { label: '心境清明', detail: '灵气与念头都在较好的位置。' };
+  const technique = getActiveTechnique(cultivationPath);
+  const advice = currentAction
+    ? { title: `专心完成「${ACTIONS[currentAction.type].label}」`, body: '一次只做一件事。等这段功课结束，长生簿会把真正的变化记下来。' }
+    : canBreakthrough
+      ? { title: '关隘已在眼前', body: '修为已经触及瓶颈，可以先用淬体或参悟稳住状态，再决定是否叩关。' }
+      : mentalState < 40
+        ? { title: '先静观参悟', body: '心境偏低时，极限运功的代价会更明显。先让神识恢复清明，下一轮吐纳会更稳。' }
+        : attributes.physique < attributes.spiritSense
+          ? { title: '今天适合淬体炼骨', body: '神识已经走在根骨前面，花一段时间把身体补上来，会让后续修炼更扎实。' }
+          : { title: '以平稳吐纳积累', body: '当前状态适合把时间交给周天。等修为接近关隘，再用险招换取突破窗口。' };
+  const note = CULTIVATION_NOTES[new Date().getDate() % CULTIVATION_NOTES.length];
+
+  return (
+    <section className="cultivation-pulse paper-card">
+      <div className="cultivation-pulse-heading">
+        <div>
+          <div className="eyebrow">READ THE INNER CURRENT · 观内在气象</div>
+          <h3>今日修炼脉象</h3>
+          <p>{note}</p>
+        </div>
+        <span className={`pulse-status ${mentalState < 40 ? 'uneasy' : mentalState >= 70 ? 'clear' : ''}`}>{mentalStatus.label}</span>
+      </div>
+      <div className="cultivation-pulse-grid">
+        <div className="pulse-metric pulse-metric-wide">
+          <div className="pulse-metric-top"><span>心境</span><strong>{mentalState} / 100</strong></div>
+          <div className="progress-track pulse-progress"><div style={{ width: `${mentalState}%` }} /></div>
+          <small>{mentalStatus.detail}</small>
+        </div>
+        <div className="pulse-metric"><div className="pulse-metric-top"><span>根骨</span><strong>{attributes.physique}</strong></div><small>身体承载灵气的底子</small></div>
+        <div className="pulse-metric"><div className="pulse-metric-top"><span>神识</span><strong>{attributes.spiritSense}</strong></div><small>感知危险与细微灵机</small></div>
+        <div className="pulse-metric"><div className="pulse-metric-top"><span>当前功法</span><strong>{technique ? technique.name : '未择'}</strong></div><small>{technique ? '参悟与研读会继续积累熟练度' : '去功法页选择一条修行道路'}</small></div>
+      </div>
+      <div className="cultivation-advice"><span>修炼建议</span><div><strong>{advice.title}</strong><p>{advice.body}</p></div></div>
+    </section>
+  );
+};
+
+const CultivationView = ({ currentAction, now, cave, sectId, attributes, cultivationPath, canBreakthrough, onStart, onBreakthrough }: {
   currentAction: GameState['character']['currentAction'];
   now: number;
   cave: GameState['cave'];
   sectId: SectId | null;
+  attributes: GameState['character']['attributes'];
+  cultivationPath: GameState['cultivationPath'];
   canBreakthrough: boolean;
   onStart: (type: ActionType, locationId?: ExplorationLocationId) => void;
   onBreakthrough: () => void;
 }) => (
   <div className="view-stack">
     <section className="page-heading">
-      <div><div className="eyebrow">THE DAILY PRACTICE · 日常功课</div><h2>修炼</h2><p>安静地积累修为，或冒险压榨自己的极限。</p></div>
+      <div><div className="eyebrow">THE DAILY PRACTICE · 日常功课</div><h2>修炼</h2><p>从吐纳、淬体、参悟到险行，按身体和心境选择今天的功课。</p></div>
       <div className="heading-stamp">静心</div>
     </section>
+    <CultivationPulse attributes={attributes} cultivationPath={cultivationPath} currentAction={currentAction} canBreakthrough={canBreakthrough} />
     {currentAction && <CurrentActionCard action={currentAction} now={now} />}
     {canBreakthrough && (
       <section className="breakthrough-card">
@@ -649,11 +727,13 @@ const CultivationView = ({ currentAction, now, cave, sectId, canBreakthrough, on
     )}
     <section className="action-section">
       <div className="section-intro">
-        <div><span className="eyebrow">CHOOSE YOUR PACE · 选择修行节奏</span><h3>今天怎么修炼</h3></div>
-        <span>一次只能安排一项行动</span>
+        <div><span className="eyebrow">CHOOSE YOUR PRACTICE · 选择今日功课</span><h3>今天怎么修炼</h3></div>
+        <span>一次只能安排一项行动 · 不同功课会改变不同底子</span>
       </div>
       <div className="action-grid practice-action-grid">
         <ActionOption type="meditate" currentAction={currentAction} cave={cave} sectId={sectId} onStart={onStart} />
+        <ActionOption type="temper" currentAction={currentAction} cave={cave} sectId={sectId} onStart={onStart} />
+        <ActionOption type="insight" currentAction={currentAction} cave={cave} sectId={sectId} onStart={onStart} />
         <ActionOption type="overdrive" currentAction={currentAction} cave={cave} sectId={sectId} onStart={onStart} />
       </div>
     </section>
@@ -695,21 +775,37 @@ const TechniqueView = ({ currentAction, now, cave, sectId, inventory, cultivatio
   </div>
 );
 
-const ExplorationView = ({ currentAction, now, cave, sectId, discoveredLocations, selectedLocationId, onLocationChange, onStart }: {
+const ExplorationView = ({ currentAction, now, cave, sectId, discoveredLocations, pendingEvent, selectedLocationId, onLocationChange, onStart, onResolveEvent }: {
   currentAction: GameState['character']['currentAction'];
   now: number;
   cave: GameState['cave'];
   sectId: SectId | null;
   discoveredLocations: string[];
+  pendingEvent: ReturnType<typeof getExplorationEvent> | null;
   selectedLocationId: ExplorationLocationId;
   onLocationChange: (locationId: ExplorationLocationId) => void;
   onStart: (type: ActionType, locationId?: ExplorationLocationId) => void;
+  onResolveEvent: (choiceId: string) => void;
 }) => (
   <div className="view-stack">
     <section className="page-heading">
       <div><div className="eyebrow">BEYOND THE GATE · 山门之外</div><h2>探索</h2><p>选择一个已经发现的地方，看看山河里藏着什么。</p></div>
       <div className="heading-resource"><span>已发现</span><strong>{discoveredLocations.length}/{Object.keys(EXPLORATION_LOCATIONS).length}</strong></div>
     </section>
+    {pendingEvent && (
+      <section className="exploration-event-card paper-card">
+        <div className="event-card-heading"><div><div className="eyebrow">{pendingEvent.eyebrow}</div><h3>{pendingEvent.title}</h3></div><span className="event-mark">✦</span></div>
+        <p className="event-summary">{pendingEvent.summary}</p>
+        <div className="event-choice-grid">
+          {pendingEvent.choices.map((choice) => (
+            <button className="event-choice" key={choice.id} onClick={() => onResolveEvent(choice.id)}>
+              <strong>{choice.label}</strong>
+              <span>{choice.summary}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+    )}
     {currentAction && <CurrentActionCard action={currentAction} now={now} />}
     <section className="exploration-workbench">
       <ExplorationPicker

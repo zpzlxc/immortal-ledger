@@ -7,7 +7,12 @@ import {
   getUpgradeCost,
   settleCave,
 } from './cave';
-import { EXPLORATION_LOCATIONS, getExplorationLocation } from './exploration';
+import {
+  EXPLORATION_LOCATIONS,
+  getExplorationEvent,
+  getExplorationEventsForLocation,
+  getExplorationLocation,
+} from './exploration';
 import {
   createSocialState,
   getPersonEvent,
@@ -34,6 +39,7 @@ import type {
   ActionType,
   CaveBuildingId,
   CultivationSchoolId,
+  ExplorationEventId,
   ExplorationLocationId,
   GameState,
   LedgerEntry,
@@ -107,6 +113,31 @@ const getNextPersonEvent = (
   return null;
 };
 
+const hasCompletedExplorationEvent = (state: GameState, eventId: ExplorationEventId) =>
+  state.completedExplorationEventIds.includes(eventId);
+
+const getNextExplorationEvent = (
+  state: GameState,
+  action: GameState['character']['currentAction'],
+) => {
+  if (state.pendingExplorationEvent || !action || action.type !== 'explore' || !action.locationId) {
+    return null;
+  }
+
+  const availableEvents = getExplorationEventsForLocation(action.locationId).filter(
+    (event) => !hasCompletedExplorationEvent(state, event.id),
+  );
+  if (availableEvents.length === 0) return null;
+
+  const eventChance = state.completedExplorationEventIds.length === 0
+    ? 1
+    : hasTalent(state, 'solitary-star')
+      ? 0.75
+      : 0.45;
+  if (Math.random() > eventChance) return null;
+  return pick(availableEvents);
+};
+
 const randomInt = (min: number, max: number) =>
   Math.floor(Math.random() * (max - min + 1)) + min;
 
@@ -117,6 +148,23 @@ const MEDITATE_RESULTS = [
   '你在蒲团上坐定，听见檐角落下一滴水。等那滴水声重复了许多遍，丹田里的灵气也恰好走完一周天。',
   '山雾从石缝里钻进来，在你肩头停了一会儿。你没有睁眼，反而借着这点清凉把散乱的念头一一收拢。',
   '今天没有天降异象，只有经脉里一圈比一圈顺畅的灵气。修仙大概就是这样，先把寻常日子过出一点不寻常。',
+];
+
+const TEMPER_WITH_HERB_RESULTS = [
+  '你把灵草揉碎敷在关节和脊背，药力沿着骨缝一寸寸散开。疼痛没有立刻消失，却让每一次呼吸都变得更有重量。',
+  '灵草的苦味在舌根化开，你引灵气撞过几处旧滞。等皮肤上的热意退下去，身体像换了一副更结实的架子。',
+  '你没有追求声势，只把药力送到最细小的经络。几个周天之后，连坐起身时都能察觉到根骨里多了一点沉稳。',
+];
+
+const TEMPER_WITHOUT_HERB_RESULTS = [
+  '手边没有灵草，你只好用最笨的办法以灵气磨脉。进展慢得几乎看不见，但骨缝里的酸意说明这一步并没有白费。',
+  '没有药力帮忙，淬体变成了和疼痛讨价还价。你收功时浑身发热，至少让根骨记住了这次冲刷。',
+];
+
+const INSIGHT_RESULTS = [
+  '你把纷乱的念头一一放下，终于听见灵气经过神识时极轻的一声回响。它没有带来立刻的修为，却让下一次呼吸有了方向。',
+  '窗外的风吹过三次，你才发现自己一直在追逐一个并不存在的答案。停下来之后，功法里那处被忽略的转折反而清楚了。',
+  '你没有强行推演口诀，只观察心境起伏与灵气涨落。等杂念沉到底部，识海里浮出一线清明，足够照亮今天的路。',
 ];
 
 const OVERDRIVE_INJURY_RESULTS = [
@@ -175,6 +223,16 @@ const ACTION_PLAN_NOTES: Record<ActionType, readonly string[]> = {
     '你把蒲团摆正，先从最稳妥的一口气开始。',
     '不求奇效，只求每一周天都走得比上一周更顺。',
     '今日的功课已经排下，山中风声会替你数着呼吸。',
+  ],
+  temper: [
+    '你把灵草、热水和一方干净的石板摆好，准备先让身体学会承受灵气。',
+    '修为不是只有丹田里的数字。你决定花一点时间，把根骨也磨成可靠的底子。',
+    '你按住经脉里想要乱窜的灵气，从最疼的一处开始，一寸一寸地淬炼自己。',
+  ],
+  insight: [
+    '你暂时合上残卷，给心神留出一小块不被口诀占满的地方。',
+    '今天不急着把修为往前推。你想先看看，究竟是什么让自己的呼吸总在同一处走偏。',
+    '你点起一盏清灯，准备在灵气和念头之间，找回那条容易被忽略的细线。',
   ],
   overdrive: [
     '你决定把经脉逼到极限，成与不成，今晚都要见分晓。',
@@ -237,6 +295,50 @@ const actionResult = (state: GameState, actionType: ActionType, completedAt: num
     title = pick(['一轮周天归于平稳', '蒲团上的安静功课', '灵气走过一周天', '今日吐纳无惊无险']);
     body = pick(MEDITATE_RESULTS);
     changes.push(`修为 +${cultivationGain}`);
+  }
+
+  if (actionType === 'temper') {
+    const hasHerb = inventory.herbs > 0;
+    if (hasHerb) inventory.herbs -= 1;
+    const physiqueGain = hasHerb ? 2 : 1;
+    cultivationGain = (hasHerb ? 14 : 8) + Math.floor(character.attributes.spiritSense / 6);
+    cultivationGain = Math.floor(
+      cultivationGain * caveEffects.cultivationMultiplier * (1 + techniqueEffects.cultivationMultiplier + sectEffects.cultivationMultiplier),
+    );
+    character.attributes.physique += physiqueGain;
+    character.attributes.mentalState = Math.max(
+      0,
+      Math.min(100, character.attributes.mentalState + (hasHerb ? 1 : -1)),
+    );
+    title = hasHerb ? pick(['药力入骨', '一轮淬体归稳', '根骨添了一分沉意']) : pick(['无药磨脉', '硬熬一轮淬体', '以灵气锻身']);
+    body = hasHerb ? pick(TEMPER_WITH_HERB_RESULTS) : pick(TEMPER_WITHOUT_HERB_RESULTS);
+    changes.push(
+      ...[
+        `修为 +${cultivationGain}`,
+        `根骨 +${physiqueGain}`,
+        hasHerb ? '灵草 -1' : '心境 -1',
+        hasHerb ? '心境 +1' : '',
+      ].filter(Boolean),
+    );
+  }
+
+  if (actionType === 'insight') {
+    cultivationGain = 6 + Math.floor(character.attributes.comprehension / 6);
+    cultivationGain = Math.floor(
+      cultivationGain * caveEffects.cultivationMultiplier * (1 + techniqueEffects.cultivationMultiplier + sectEffects.cultivationMultiplier),
+    );
+    character.attributes.comprehension += 1;
+    character.attributes.spiritSense += 1;
+    character.attributes.mentalState = Math.min(100, character.attributes.mentalState + 6);
+    title = pick(['识海微明', '静观所得', '念头沉入清水', '一线悟处']);
+    body = pick(INSIGHT_RESULTS);
+    changes.push('悟性 +1', '神识 +1', '心境 +6', `修为 +${cultivationGain}`);
+    const techniqueProgress = getTechniqueProgress(state.cultivationPath);
+    if (techniqueProgress) {
+      const proficiencyGain = 4 + techniqueEffects.studyProficiencyBonus;
+      techniqueProgress.proficiency = Math.min(100, techniqueProgress.proficiency + proficiencyGain);
+      changes.push(`熟练度 +${proficiencyGain}`);
+    }
   }
 
   if (actionType === 'overdrive') {
@@ -420,6 +522,8 @@ export const settleGame = (input: GameState, now = Date.now()): SettlementResult
   const state = structuredClone(input);
   state.cultivationPath = state.cultivationPath ?? createCultivationPath();
   state.social = state.social ?? createSocialState();
+  state.pendingExplorationEvent = state.pendingExplorationEvent ?? null;
+  state.completedExplorationEventIds = state.completedExplorationEventIds ?? [];
   const newEntries: LedgerEntry[] = [];
   const elapsedMs = now - state.lastSettledAt;
 
@@ -481,6 +585,24 @@ export const settleGame = (input: GameState, now = Date.now()): SettlementResult
           `人物事件：${personEvent.title}`,
           personEvent.summary,
           ['待处理', personEvent.eyebrow],
+          completedAction.endsAt,
+        ),
+      );
+    }
+    const explorationEvent = !personEvent && !state.social.pendingPersonEvent
+      ? getNextExplorationEvent(state, completedAction)
+      : null;
+    if (explorationEvent) {
+      state.pendingExplorationEvent = {
+        eventId: explorationEvent.id,
+        createdAt: completedAction.endsAt,
+      };
+      newEntries.push(
+        createLedgerEntry(
+          'exploration',
+          `探索抉择：${explorationEvent.title}`,
+          explorationEvent.summary,
+          ['待处理', explorationEvent.eyebrow],
           completedAction.endsAt,
         ),
       );
@@ -556,6 +678,9 @@ export const startSectMission = (
   }
   if (state.character.currentAction) {
     return { state, newEntries: [], error: '你正在进行另一项行动，暂时无法接下宗门任务。' };
+  }
+  if (state.pendingExplorationEvent || state.social.pendingPersonEvent) {
+    return { state, newEntries: [], error: '请先处理眼前的事件，再接下新的宗门任务。' };
   }
   return {
     state: startAction(state, 'sect_mission', now, 'qingstone-mountain', missionId),
@@ -645,6 +770,86 @@ export type SocialMutationResult = {
   state: GameState;
   newEntries: LedgerEntry[];
   error?: string;
+};
+
+export type ExplorationMutationResult = {
+  state: GameState;
+  newEntries: LedgerEntry[];
+  error?: string;
+};
+
+export const resolveExplorationEvent = (
+  input: GameState,
+  choiceId: string,
+  now = Date.now(),
+): ExplorationMutationResult => {
+  const state = structuredClone(input);
+  const pendingEvent = state.pendingExplorationEvent;
+  if (!pendingEvent) {
+    return { state, newEntries: [], error: '现在没有需要回应的探索事件。' };
+  }
+
+  const event = getExplorationEvent(pendingEvent.eventId);
+  const choice = event?.choices.find((candidate) => candidate.id === choiceId);
+  if (!event || !choice) {
+    return { state, newEntries: [], error: '这条探索事件的选项已经失效。' };
+  }
+
+  const effects = choice.effects;
+  const inventoryChecks: Array<keyof GameState['inventory']> = [
+    'spiritStones',
+    'herbs',
+    'techniqueFragments',
+  ];
+  if (inventoryChecks.some((key) => state.inventory[key] + (effects[key] ?? 0) < 0)) {
+    return { state, newEntries: [], error: '手边材料不够，无法选择这项处理方式。' };
+  }
+
+  state.inventory.spiritStones += effects.spiritStones ?? 0;
+  state.inventory.herbs += effects.herbs ?? 0;
+  state.inventory.techniqueFragments += effects.techniqueFragments ?? 0;
+  state.character.realm.cultivation += effects.cultivation ?? 0;
+  state.character.attributes.physique = Math.max(
+    1,
+    state.character.attributes.physique + (effects.physique ?? 0),
+  );
+  state.character.attributes.spiritSense = Math.max(
+    1,
+    state.character.attributes.spiritSense + (effects.spiritSense ?? 0),
+  );
+  state.character.attributes.mentalState = Math.max(
+    0,
+    Math.min(100, state.character.attributes.mentalState + (effects.mentalState ?? 0)),
+  );
+  state.character.attributes.fortune += effects.fortune ?? 0;
+  state.character.attributes.karma += effects.karma ?? 0;
+  state.completedExplorationEventIds = state.completedExplorationEventIds ?? [];
+  if (!state.completedExplorationEventIds.includes(event.id)) {
+    state.completedExplorationEventIds = [...state.completedExplorationEventIds, event.id];
+  }
+  state.pendingExplorationEvent = null;
+
+  const signed = (value: number) => `${value > 0 ? '+' : ''}${value}`;
+  const changes = [
+    effects.spiritStones ? `灵石 ${signed(effects.spiritStones)}` : '',
+    effects.herbs ? `灵草 ${signed(effects.herbs)}` : '',
+    effects.techniqueFragments ? `功法残页 ${signed(effects.techniqueFragments)}` : '',
+    effects.cultivation ? `修为 ${signed(effects.cultivation)}` : '',
+    effects.physique ? `根骨 ${signed(effects.physique)}` : '',
+    effects.spiritSense ? `神识 ${signed(effects.spiritSense)}` : '',
+    effects.mentalState ? `心境 ${signed(effects.mentalState)}` : '',
+    effects.fortune ? `气运 ${signed(effects.fortune)}` : '',
+    effects.karma ? `因果 ${signed(effects.karma)}` : '',
+  ].filter(Boolean);
+  const entry = createLedgerEntry(
+    'exploration',
+    `${event.title}：${choice.label}`,
+    `${choice.summary}这一次选择已经写入长生簿，山路也因此留下了一道新的岔口。`,
+    changes,
+    now,
+  );
+  state.ledger = [entry, ...state.ledger].slice(0, 100);
+  return { state, newEntries: [entry] };
 };
 
 export const resolvePersonEvent = (
