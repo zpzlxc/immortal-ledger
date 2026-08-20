@@ -86,7 +86,7 @@ const App = () => {
   });
   const [now, setNow] = useState(Date.now());
   const [notice, setNotice] = useState<LedgerEntry[]>([]);
-  const [activeTab, setActiveTab] = useState<'ledger' | 'cultivation' | 'people' | 'cave' | 'codex'>('ledger');
+  const [activeTab, setActiveTab] = useState<'ledger' | 'cultivation' | 'technique' | 'exploration' | 'people' | 'cave' | 'codex'>('ledger');
   const [selectedExplorationLocationId, setSelectedExplorationLocationId] = useState<ExplorationLocationId>('qingstone-mountain');
   const [errorMessage, setErrorMessage] = useState('');
   const importInput = useRef<HTMLInputElement>(null);
@@ -354,6 +354,8 @@ const App = () => {
           <div className="tab-bar">
             <TabButton active={activeTab === 'ledger'} onClick={() => setActiveTab('ledger')} label="长生簿" badge={unreadCount} />
             <TabButton active={activeTab === 'cultivation'} onClick={() => setActiveTab('cultivation')} label="修炼" />
+            <TabButton active={activeTab === 'technique'} onClick={() => setActiveTab('technique')} label="功法" />
+            <TabButton active={activeTab === 'exploration'} onClick={() => setActiveTab('exploration')} label="探索" />
             <TabButton active={activeTab === 'people'} onClick={() => setActiveTab('people')} label="人物" badge={game.social.pendingPersonEvent ? 1 : undefined} />
             <TabButton active={activeTab === 'cave'} onClick={() => setActiveTab('cave')} label="洞府" />
             <TabButton active={activeTab === 'codex'} onClick={() => setActiveTab('codex')} label="图鉴" />
@@ -384,17 +386,35 @@ const App = () => {
               currentAction={game.character.currentAction}
               now={now}
               cave={game.cave}
+              sectId={game.social.sect.sectId}
+              canBreakthrough={canBreakthrough}
+              onStart={handleStartAction}
+              onBreakthrough={handleBreakthrough}
+            />
+          )}
+          {activeTab === 'technique' && (
+            <TechniqueView
+              currentAction={game.character.currentAction}
+              now={now}
+              cave={game.cave}
+              sectId={game.social.sect.sectId}
               inventory={game.inventory}
+              cultivationPath={game.cultivationPath}
+              onChooseSchool={handleChooseSchool}
+              onResearchBranch={handleResearchBranch}
+              onStart={handleStartAction}
+            />
+          )}
+          {activeTab === 'exploration' && (
+            <ExplorationView
+              currentAction={game.character.currentAction}
+              now={now}
+              cave={game.cave}
               sectId={game.social.sect.sectId}
               discoveredLocations={game.discoveredLocations}
               selectedLocationId={selectedExplorationLocationId}
               onLocationChange={setSelectedExplorationLocationId}
-              cultivationPath={game.cultivationPath}
-              onChooseSchool={handleChooseSchool}
-              onResearchBranch={handleResearchBranch}
-              canBreakthrough={canBreakthrough}
               onStart={handleStartAction}
-              onBreakthrough={handleBreakthrough}
             />
           )}
           {activeTab === 'cave' && (
@@ -563,67 +583,152 @@ const CurrentActionCard = ({ action, now }: { action: GameState['character']['cu
   );
 };
 
-const CultivationView = ({ currentAction, now, cave, inventory, sectId, discoveredLocations, selectedLocationId, onLocationChange, cultivationPath, onChooseSchool, onResearchBranch, canBreakthrough, onStart, onBreakthrough }: {
+type ActionOptionProps = {
+  type: ActionType;
+  currentAction: GameState['character']['currentAction'];
+  cave: GameState['cave'];
+  sectId: SectId | null;
+  selectedLocationId?: ExplorationLocationId;
+  onStart: (type: ActionType, locationId?: ExplorationLocationId) => void;
+};
+
+const ActionOption = ({ type, currentAction, cave, sectId, selectedLocationId, onStart }: ActionOptionProps) => {
+  const disabled = Boolean(currentAction);
+  const action = ACTIONS[type];
+  const locationId = selectedLocationId ?? 'qingstone-mountain';
+  const explorationLocation = type === 'explore' ? EXPLORATION_LOCATIONS[locationId] : null;
+  const durationMinutes = getActionDurationMinutes(type, cave, locationId, sectId);
+  const detail = explorationLocation
+    ? explorationLocation.risk
+    : type === 'study' && durationMinutes < action.durationMinutes
+      ? `${action.risk} · 藏经阁已缩短时间`
+      : action.risk;
+
+  return (
+    <article className={`action-option ${disabled ? 'disabled' : ''}`}>
+      <div className="action-icon">{action.icon}</div>
+      <div className="action-option-copy">
+        <div className="action-option-title">
+          <h3>{explorationLocation ? `${action.label} · ${explorationLocation.label}` : action.label}</h3>
+          <span>{durationMinutes} 分钟</span>
+        </div>
+        <p>{explorationLocation ? explorationLocation.summary : action.description}</p>
+        <small>{detail}</small>
+      </div>
+      <button
+        className="secondary-button"
+        disabled={disabled}
+        onClick={() => onStart(type, type === 'explore' ? locationId : undefined)}
+      >
+        {disabled ? '行动中' : '安排'}
+      </button>
+    </article>
+  );
+};
+
+const CultivationView = ({ currentAction, now, cave, sectId, canBreakthrough, onStart, onBreakthrough }: {
   currentAction: GameState['character']['currentAction'];
   now: number;
   cave: GameState['cave'];
+  sectId: SectId | null;
+  canBreakthrough: boolean;
+  onStart: (type: ActionType, locationId?: ExplorationLocationId) => void;
+  onBreakthrough: () => void;
+}) => (
+  <div className="view-stack">
+    <section className="page-heading">
+      <div><div className="eyebrow">THE DAILY PRACTICE · 日常功课</div><h2>修炼</h2><p>安静地积累修为，或冒险压榨自己的极限。</p></div>
+      <div className="heading-stamp">静心</div>
+    </section>
+    {currentAction && <CurrentActionCard action={currentAction} now={now} />}
+    {canBreakthrough && (
+      <section className="breakthrough-card">
+        <div><span className="eyebrow">A GATE AWAITS · 关隘已至</span><h3>你的修为已经触及当前瓶颈。</h3><p>继续修炼可以夯实根基，也可以现在尝试突破。</p></div>
+        <button className="primary-button" onClick={onBreakthrough}>尝试突破</button>
+      </section>
+    )}
+    <section className="action-section">
+      <div className="section-intro">
+        <div><span className="eyebrow">CHOOSE YOUR PACE · 选择修行节奏</span><h3>今天怎么修炼</h3></div>
+        <span>一次只能安排一项行动</span>
+      </div>
+      <div className="action-grid practice-action-grid">
+        <ActionOption type="meditate" currentAction={currentAction} cave={cave} sectId={sectId} onStart={onStart} />
+        <ActionOption type="overdrive" currentAction={currentAction} cave={cave} sectId={sectId} onStart={onStart} />
+      </div>
+    </section>
+    {currentAction && <div className="hint-note">当前行动还剩 {formatRemaining(currentAction.endsAt, now)}。你可以关闭网页，回来时查看长生簿。</div>}
+  </div>
+);
+
+const TechniqueView = ({ currentAction, now, cave, sectId, inventory, cultivationPath, onChooseSchool, onResearchBranch, onStart }: {
+  currentAction: GameState['character']['currentAction'];
+  now: number;
+  cave: GameState['cave'];
+  sectId: SectId | null;
   inventory: GameState['inventory'];
+  cultivationPath: GameState['cultivationPath'];
+  onChooseSchool: (schoolId: CultivationSchoolId) => void;
+  onResearchBranch: (branchId: string) => void;
+  onStart: (type: ActionType, locationId?: ExplorationLocationId) => void;
+}) => (
+  <div className="view-stack">
+    <section className="page-heading">
+      <div><div className="eyebrow">THE WAY WITHIN · 内在功法</div><h2>功法</h2><p>选择一条道路，研读残卷，把一门功法走深。</p></div>
+      <div className="heading-resource"><span>功法残页</span><strong>{inventory.techniqueFragments}</strong></div>
+    </section>
+    {currentAction && <CurrentActionCard action={currentAction} now={now} />}
+    <TechniquePathPanel
+      cultivationPath={cultivationPath}
+      inventory={inventory}
+      onChooseSchool={onChooseSchool}
+      onResearchBranch={onResearchBranch}
+    />
+    <section className="technique-study-card paper-card">
+      <div className="section-intro">
+        <div><span className="eyebrow">STUDY THE FRAGMENTS · 研读残卷</span><h3>让功法继续生长</h3></div>
+        <span>研读会提升功法熟练度</span>
+      </div>
+      <ActionOption type="study" currentAction={currentAction} cave={cave} sectId={sectId} onStart={onStart} />
+    </section>
+    {currentAction && <div className="hint-note">当前行动还剩 {formatRemaining(currentAction.endsAt, now)}。你可以关闭网页，回来时查看长生簿。</div>}
+  </div>
+);
+
+const ExplorationView = ({ currentAction, now, cave, sectId, discoveredLocations, selectedLocationId, onLocationChange, onStart }: {
+  currentAction: GameState['character']['currentAction'];
+  now: number;
+  cave: GameState['cave'];
   sectId: SectId | null;
   discoveredLocations: string[];
   selectedLocationId: ExplorationLocationId;
   onLocationChange: (locationId: ExplorationLocationId) => void;
-  cultivationPath: GameState['cultivationPath'];
-  onChooseSchool: (schoolId: CultivationSchoolId) => void;
-  onResearchBranch: (branchId: string) => void;
-  canBreakthrough: boolean;
   onStart: (type: ActionType, locationId?: ExplorationLocationId) => void;
-  onBreakthrough: () => void;
-}) => {
-  const disabled = Boolean(currentAction);
-  const regularActionTypes = (Object.keys(ACTIONS) as ActionType[]).filter((type) => type !== 'explore' && type !== 'sect_mission');
-  const renderActionOption = (type: ActionType) => {
-    const action = ACTIONS[type];
-    const explorationLocation = type === 'explore' ? EXPLORATION_LOCATIONS[selectedLocationId] : null;
-    const durationMinutes = getActionDurationMinutes(type, cave, selectedLocationId, sectId);
-    return <article className={`action-option ${disabled ? 'disabled' : ''}`} key={type}>
-      <div className="action-icon">{action.icon}</div>
-      <div className="action-option-copy"><div className="action-option-title"><h3>{explorationLocation ? `${action.label} · ${explorationLocation.label}` : action.label}</h3><span>{durationMinutes} 分钟</span></div><p>{explorationLocation ? explorationLocation.summary : action.description}</p><small>{explorationLocation ? explorationLocation.risk : type === 'study' && durationMinutes < action.durationMinutes ? `${action.risk} · 藏经阁已缩短时间` : action.risk}</small></div>
-      <button className="secondary-button" disabled={disabled} onClick={() => onStart(type, type === 'explore' ? selectedLocationId : undefined)}>{disabled ? '行动中' : '安排'}</button>
-    </article>;
-  };
-
-  return (
-    <div className="view-stack">
-      <section className="page-heading">
-        <div><div className="eyebrow">THE DAILY PRACTICE · 日常功课</div><h2>安排修炼</h2><p>先选一项功课；若要出门，再在下方选择探索地点。</p></div>
-        <div className="heading-stamp">静心</div>
-      </section>
-      {canBreakthrough && (
-        <section className="breakthrough-card">
-          <div><span className="eyebrow">A GATE AWAITS · 关隘已至</span><h3>你的修为已经触及当前瓶颈。</h3><p>继续修炼可以夯实根基，也可以现在尝试突破。</p></div>
-          <button className="primary-button" onClick={onBreakthrough}>尝试突破</button>
-        </section>
-      )}
-      <TechniquePathPanel
-        cultivationPath={cultivationPath}
-        inventory={inventory}
-        onChooseSchool={onChooseSchool}
-        onResearchBranch={onResearchBranch}
+}) => (
+  <div className="view-stack">
+    <section className="page-heading">
+      <div><div className="eyebrow">BEYOND THE GATE · 山门之外</div><h2>探索</h2><p>选择一个已经发现的地方，看看山河里藏着什么。</p></div>
+      <div className="heading-resource"><span>已发现</span><strong>{discoveredLocations.length}/{Object.keys(EXPLORATION_LOCATIONS).length}</strong></div>
+    </section>
+    {currentAction && <CurrentActionCard action={currentAction} now={now} />}
+    <section className="exploration-workbench">
+      <ExplorationPicker
+        discoveredLocations={discoveredLocations}
+        selectedLocationId={selectedLocationId}
+        disabled={Boolean(currentAction)}
+        onChange={onLocationChange}
       />
-      <div className="action-grid">{regularActionTypes.map(renderActionOption)}</div>
-      <section className="exploration-workbench">
-        <ExplorationPicker
-          discoveredLocations={discoveredLocations}
-          selectedLocationId={selectedLocationId}
-          disabled={disabled}
-          onChange={onLocationChange}
-        />
-        {renderActionOption('explore')}
+      <section className="exploration-action-card paper-card">
+        <div className="section-intro">
+          <div><span className="eyebrow">SET OUT · 动身</span><h3>准备好就出发</h3></div>
+          <span>地点会影响耗时、风险和收获</span>
+        </div>
+        <ActionOption type="explore" currentAction={currentAction} cave={cave} sectId={sectId} selectedLocationId={selectedLocationId} onStart={onStart} />
       </section>
-      {currentAction && <div className="hint-note">当前行动还剩 {formatRemaining(currentAction.endsAt, now)}。你可以关闭网页，回来时查看长生簿。</div>}
-    </div>
-  );
-};
+    </section>
+    {currentAction && <div className="hint-note">当前行动还剩 {formatRemaining(currentAction.endsAt, now)}。你可以关闭网页，回来时查看长生簿。</div>}
+  </div>
+);
 
 const formatTechniqueEffects = (effects: TechniqueDefinition['branches'][number]['effects']) => {
   const labels: string[] = [];

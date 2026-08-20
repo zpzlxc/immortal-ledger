@@ -71,7 +71,7 @@ button:disabled { cursor: not-allowed; }
 .danger-link:hover { color: var(--red); opacity: 1; }
 
 .content-column { min-width: 0; }
-.tab-bar { border-bottom: 1px solid rgba(142,111,70,.2); display: flex; gap: 26px; margin-bottom: 25px; flex-wrap: wrap; }
+.tab-bar { border-bottom: 1px solid rgba(142,111,70,.2); display: flex; gap: 22px; margin-bottom: 25px; flex-wrap: wrap; }
 .tab-button { background: transparent; border: 0; padding: 0 0 13px; color: var(--muted); font-size: 13px; position: relative; }
 .tab-button.active { color: var(--ink); }
 .tab-button.active::after { content: ""; position: absolute; bottom: -1px; height: 2px; background: var(--red); left: 0; right: 0; }
@@ -122,10 +122,19 @@ button:disabled { cursor: not-allowed; }
 
 .page-heading { display: flex; align-items: flex-start; justify-content: space-between; padding: 10px 0 14px; border-bottom: 1px solid var(--line); }
 .heading-stamp { width: 53px; height: 53px; display: grid; place-items: center; color: var(--red); border: 1px solid rgba(159,67,53,.45); font-size: 15px; transform: rotate(5deg); }
+.heading-resource { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; color: var(--gold); font: 10px Arial, sans-serif; padding-top: 5px; white-space: nowrap; }
+.heading-resource strong { color: var(--red); font: 22px Georgia, serif; }
 .heading-stamp.built { color: var(--green); border-color: rgba(113,128,92,.5); }
 .breakthrough-card { padding: 21px 23px; display: flex; align-items: center; justify-content: space-between; gap: 20px; background: #f5ead1; border: 1px solid #e5ce9e; }
 .breakthrough-card h3 { font-size: 15px; font-weight: 600; margin: 7px 0 5px; }
 .breakthrough-card p { color: #8b7555; font-size: 12px; margin: 0; }
+.action-section, .technique-study-card, .exploration-action-card { padding: 20px; }
+.action-section { background: var(--paper); border: 1px solid rgba(142,111,70,.15); }
+.section-intro { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.section-intro h3 { font-size: 16px; font-weight: 600; margin: 7px 0 0; }
+.section-intro > span { color: var(--muted); font-size: 10px; line-height: 1.6; padding-top: 4px; text-align: right; }
+.action-section .action-grid, .technique-study-card .action-option, .exploration-action-card .action-option { margin-top: 14px; }
+.technique-study-card .action-option, .exploration-action-card .action-option { background: #fcf8f0; }
 .primary-button, .secondary-button { border: 0; transition: transform .15s, background .15s; }
 .primary-button { color: var(--paper); background: var(--red); padding: 11px 18px; font-size: 12px; white-space: nowrap; }
 .primary-button:hover { background: var(--red-dark); transform: translateY(-1px); }
@@ -331,6 +340,9 @@ button:disabled { cursor: not-allowed; }
   .hero-panel { padding: 28px 25px; min-height: 160px; }
   .hero-ornament { margin-right: 10px; font-size: 58px; }
   .hero-panel h2, .page-heading h2 { font-size: 28px; letter-spacing: 5px; }
+  .tab-bar { gap: 17px; }
+  .section-intro { flex-direction: column; gap: 8px; }
+  .section-intro > span { padding-top: 0; text-align: left; }
   .action-grid { grid-template-columns: 1fr; }
   .school-grid, .technique-branch-grid { grid-template-columns: 1fr; }
   .event-choice-grid, .relationship-grid, .sect-grid, .mission-grid, .exchange-grid { grid-template-columns: 1fr; }
