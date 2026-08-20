@@ -342,6 +342,16 @@ const App = () => {
       </header>
 
       <main className="main-layout">
+        <nav className="tab-bar">
+          <TabButton icon="簿" active={activeTab === 'ledger'} onClick={() => setActiveTab('ledger')} label="长生簿" badge={unreadCount} />
+          <TabButton icon="炼" active={activeTab === 'cultivation'} onClick={() => setActiveTab('cultivation')} label="修炼" />
+          <TabButton icon="诀" active={activeTab === 'technique'} onClick={() => setActiveTab('technique')} label="功法" />
+          <TabButton icon="山" active={activeTab === 'exploration'} onClick={() => setActiveTab('exploration')} label="探索" badge={game.pendingExplorationEvent ? 1 : undefined} />
+          <TabButton icon="缘" active={activeTab === 'people'} onClick={() => setActiveTab('people')} label="人物" badge={game.social.pendingPersonEvent ? 1 : undefined} />
+          <TabButton icon="府" active={activeTab === 'cave'} onClick={() => setActiveTab('cave')} label="洞府" />
+          <TabButton icon="录" active={activeTab === 'codex'} onClick={() => setActiveTab('codex')} label="图鉴" />
+        </nav>
+
         <aside className="sidebar">
           <section className="character-card paper-card">
             <div className="eyebrow">CURRENT LIFE · 本世</div>
@@ -388,16 +398,6 @@ const App = () => {
         </aside>
 
         <section className="content-column">
-          <div className="tab-bar">
-            <TabButton active={activeTab === 'ledger'} onClick={() => setActiveTab('ledger')} label="长生簿" badge={unreadCount} />
-            <TabButton active={activeTab === 'cultivation'} onClick={() => setActiveTab('cultivation')} label="修炼" />
-            <TabButton active={activeTab === 'technique'} onClick={() => setActiveTab('technique')} label="功法" />
-            <TabButton active={activeTab === 'exploration'} onClick={() => setActiveTab('exploration')} label="探索" badge={game.pendingExplorationEvent ? 1 : undefined} />
-            <TabButton active={activeTab === 'people'} onClick={() => setActiveTab('people')} label="人物" badge={game.social.pendingPersonEvent ? 1 : undefined} />
-            <TabButton active={activeTab === 'cave'} onClick={() => setActiveTab('cave')} label="洞府" />
-            <TabButton active={activeTab === 'codex'} onClick={() => setActiveTab('codex')} label="图鉴" />
-          </div>
-
           {notice.length > 0 && (
             <div className="settlement-banner">
               <div className="banner-symbol">✧</div>
@@ -636,9 +636,9 @@ const BrandLogo = () => (
   </div>
 );
 
-const TabButton = ({ active, label, badge, onClick }: { active: boolean; label: string; badge?: number; onClick: () => void }) => (
+const TabButton = ({ active, label, icon, badge, onClick }: { active: boolean; label: string; icon: string; badge?: number; onClick: () => void }) => (
   <button className={`tab-button ${active ? 'active' : ''}`} onClick={onClick}>
-    {label}{badge ? <span className="tab-badge">{badge}</span> : null}
+    <span className="tab-icon" aria-hidden="true">{icon}</span>{label}{badge ? <span className="tab-badge">{badge}</span> : null}
   </button>
 );
 
@@ -1043,6 +1043,9 @@ const ExplorationPicker = ({ discoveredLocations, selectedLocationId, disabled, 
             key={location.id}
             onClick={() => onChange(location.id)}
           >
+            <div className="location-card-art" style={{ backgroundImage: `url(${location.image})` }} aria-hidden="true">
+              <span className="location-card-art-mark">{location.icon}</span>
+            </div>
             <div className="location-card-top"><span className="location-icon">{location.icon}</span><span><strong>{location.label}</strong><small>{location.durationMinutes} 分钟 · {unlocked ? '已发现' : '未发现'}</small></span></div>
             <p>{unlocked ? location.summary : '？？？'}</p>
             <small className="location-risk">{unlocked ? location.risk : location.unlockHint}</small>
@@ -1106,6 +1109,9 @@ const PeopleView = ({ social, currentAction, onResolveEvent, onJoinSect, onStart
             const discovered = relationship.discovered;
             return (
               <article className={`relationship-card ${discovered ? '' : 'undiscovered'}`} key={person.id}>
+                <div className="relationship-portrait" style={discovered ? { backgroundImage: `url(${person.portrait})` } : undefined} aria-hidden="true">
+                  <span>{discovered ? person.icon : '?'}</span>
+                </div>
                 <div className="relationship-card-top"><span className="relationship-icon">{discovered ? person.icon : '?'}</span><div><strong>{discovered ? person.name : '未识之人'}</strong><small>{discovered ? person.title : '等待相逢'}</small></div></div>
                 <p>{discovered ? person.introduction : '长生簿只记下了一个模糊的背影。也许下一次探索归来，名字就会落在纸上。'}</p>
                 <div className="relationship-meta">{discovered ? <><span>{relationship.status}</span><span>好感 {relationship.affinity}</span></> : <span>尚未相识</span>}</div>
@@ -1250,7 +1256,12 @@ const CodexView = ({ game }: { game: GameState }) => (
     <div className="codex-grid">
       {Object.values(EXPLORATION_LOCATIONS).map((location, index) => {
         const discovered = game.discoveredLocations.includes(location.id);
-        return <div className={`codex-card ${discovered ? '' : 'locked'}`} key={location.id}><span className="codex-number">{String(index + 1).padStart(2, '0')}</span><div><strong>{location.label}</strong><p>{discovered ? location.atmosphere : location.unlockHint}</p></div><span className="discovered-mark">{discovered ? '已发现' : '未解锁'}</span></div>;
+        return <div className={`codex-card ${discovered ? '' : 'locked'}`} key={location.id}>
+          <div className="codex-art" style={discovered ? { backgroundImage: `url(${location.image})` } : undefined} aria-hidden="true"><span>{discovered ? location.icon : '？'}</span></div>
+          <span className="codex-number">{String(index + 1).padStart(2, '0')}</span>
+          <div><strong>{location.label}</strong><p>{discovered ? location.atmosphere : location.unlockHint}</p></div>
+          <span className="discovered-mark">{discovered ? '已发现' : '未解锁'}</span>
+        </div>;
       })}
       <div className="codex-card"><span className="codex-number">天赋</span><div><strong>已选天赋</strong><p>{game.character.talents.map((talent) => talent.name).join('、')}</p></div><span className="discovered-mark">本世</span></div>
     </div>

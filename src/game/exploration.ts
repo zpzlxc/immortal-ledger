@@ -4,6 +4,7 @@ export type ExplorationLocation = {
   id: ExplorationLocationId;
   label: string;
   icon: string;
+  image: string;
   summary: string;
   atmosphere: string;
   recommendation: string;
@@ -18,6 +19,7 @@ export const EXPLORATION_LOCATIONS: Record<ExplorationLocationId, ExplorationLoc
     id: 'qingstone-mountain',
     label: '青石山',
     icon: '山',
+    image: '/assets/locations/qingstone-mountain.png',
     summary: '沿旧猎道采药寻石，偶尔会听见不属于鸟兽的铃声。',
     atmosphere: '山风清冷，旧路和猎户棚之间藏着许多小秘密。',
     recommendation: '炼气一层即可前往',
@@ -30,6 +32,7 @@ export const EXPLORATION_LOCATIONS: Record<ExplorationLocationId, ExplorationLoc
     id: 'blackwind-valley',
     label: '黑风谷',
     icon: '风',
+    image: '/assets/locations/blackwind-valley.png',
     summary: '黑风常年不散，残破石碑和功法残页埋在乱石之间。',
     atmosphere: '谷底风声像有人贴着耳边说话，稍不留神就会迷失方向。',
     recommendation: '炼气三层后更稳妥',
@@ -42,6 +45,7 @@ export const EXPLORATION_LOCATIONS: Record<ExplorationLocationId, ExplorationLoc
     id: 'nameless-well',
     label: '无名古井',
     icon: '井',
+    image: '/assets/locations/nameless-well.png',
     summary: '井底没有水，只有一圈听不懂的回声，和一条通往旧事的暗线。',
     atmosphere: '井口望下去深不见底，偶尔会传来像是你自己说过的话。',
     recommendation: '炼气六层后再深入',

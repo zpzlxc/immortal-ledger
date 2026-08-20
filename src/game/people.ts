@@ -12,6 +12,7 @@ export type RelationshipDefinition = {
   name: string;
   title: string;
   icon: string;
+  portrait: string;
   introduction: string;
   flavor: string;
 };
@@ -22,6 +23,7 @@ export const RELATIONSHIPS: Record<RelationshipId, RelationshipDefinition> = {
     name: '林秋',
     title: '行脚商人',
     icon: '商',
+    portrait: '/assets/characters/lin-qiu.png',
     introduction: '她的货箱里总有一半东西不知从哪里来，另一半则不肯说自己要去哪里。',
     flavor: '愿意把秘密标上价，也愿意为一个可靠的人少算几枚灵石。',
   },
@@ -30,6 +32,7 @@ export const RELATIONSHIPS: Record<RelationshipId, RelationshipDefinition> = {
     name: '玄松道人',
     title: '游方散修',
     icon: '松',
+    portrait: '/assets/characters/xuan-song.png',
     introduction: '他在山门之外讲道，手里的拂尘沾着尘土，讲出来的却总是最难的一句。',
     flavor: '不急着收徒，只观察你是否能把听见的道理用在下一次呼吸里。',
   },
@@ -38,6 +41,7 @@ export const RELATIONSHIPS: Record<RelationshipId, RelationshipDefinition> = {
     name: '无名残魂',
     title: '井中回声',
     icon: '魂',
+    portrait: '/assets/characters/nameless-soul.png',
     introduction: '它没有名字，也没有完整的记忆，只在你转身时比你早半拍说出心里的话。',
     flavor: '它对你越熟悉，井底那些被遗忘的旧事就越愿意浮上来。',
   },
