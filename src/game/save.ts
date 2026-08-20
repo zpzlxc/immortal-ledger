@@ -40,7 +40,7 @@ export const createNewGame = (name: string, talentIds: string[]): GameState => {
   const now = Date.now();
 
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     lastSettledAt: now,
     character: {
       id: createId(),
@@ -97,7 +97,7 @@ export const normalizeGameState = (input: GameState): GameState => {
   const initialCave = createCave(now, shouldUnlockCave);
   const cave = legacyCave ?? initialCave;
 
-  state.schemaVersion = Math.max(4, Number(state.schemaVersion) || 1);
+  state.schemaVersion = Math.max(5, Number(state.schemaVersion) || 1);
   state.cave = {
     ...initialCave,
     ...cave,
@@ -193,6 +193,7 @@ export const normalizeGameState = (input: GameState): GameState => {
   state.social.sect.invited = Boolean(state.social.sect.invited);
   state.social.sect.joinedAt = state.social.sect.joinedAt ? Number(state.social.sect.joinedAt) : null;
   state.social.sect.contribution = Math.max(0, Number(state.social.sect.contribution) || 0);
+  state.social.sect.reputation = Math.max(0, Number(state.social.sect.reputation) || 0);
   state.social.completedPersonEventIds = state.social.completedPersonEventIds.filter(
     (eventId): eventId is PersonEventId => eventId in PERSON_EVENTS,
   );

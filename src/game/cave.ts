@@ -1,7 +1,7 @@
 import { ACTIONS } from './content';
 import { getExplorationLocation } from './exploration';
-import { getSectEffects } from './people';
-import type { ActionType, CaveBuildingId, CaveState, ExplorationLocationId, SectId } from './types';
+import { getSectEffects, getSectMission } from './people';
+import type { ActionType, CaveBuildingId, CaveState, ExplorationLocationId, SectId, SectMissionId } from './types';
 
 export const CAVE_MAX_LEVEL = 3;
 export const CAVE_PRODUCTION_INTERVAL_MINUTES = 60;
@@ -104,7 +104,9 @@ export const getActionDurationMinutes = (
   cave: CaveState,
   locationId?: ExplorationLocationId,
   sectId: SectId | null = null,
+  missionId?: SectMissionId,
 ) => {
+  if (actionType === 'sect_mission' && missionId) return getSectMission(missionId)?.durationMinutes ?? ACTIONS[actionType].durationMinutes;
   if (actionType === 'explore') return getExplorationLocation(locationId).durationMinutes;
   if (actionType !== 'study') return ACTIONS[actionType].durationMinutes;
   return Math.max(

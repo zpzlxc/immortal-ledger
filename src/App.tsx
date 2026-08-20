@@ -18,7 +18,11 @@ import { EXPLORATION_LOCATIONS } from './game/exploration';
 import {
   getPersonEvent,
   getSectEffects,
+  getSectMission,
+  getSectMissions,
+  getSectRank,
   RELATIONSHIPS,
+  SECT_EXCHANGES,
   SECTS,
 } from './game/people';
 import {
@@ -35,6 +39,8 @@ import type {
   GameState,
   LedgerEntry,
   SectId,
+  SectExchangeId,
+  SectMissionId,
   Talent,
 } from './game/types';
 import {
@@ -48,10 +54,12 @@ import {
 import {
   collectCave,
   chooseCultivationSchool,
+  exchangeSectReputation,
   joinSect,
   researchTechniqueBranch,
   resolvePersonEvent,
   settleGame,
+  startSectMission,
   startAction,
   tryBreakthrough,
   upgradeCaveBuilding,
@@ -169,6 +177,25 @@ const App = () => {
   const handleJoinSect = (sectId: SectId) => {
     if (!game) return;
     const result = joinSect(game, sectId, Date.now());
+    saveGame(result.state);
+    setGame(result.state);
+    setErrorMessage(result.error ?? '');
+    if (result.newEntries.length > 0) setNotice(result.newEntries);
+  };
+
+  const handleStartSectMission = (missionId: SectMissionId) => {
+    if (!game) return;
+    const settled = settleGame(game, Date.now());
+    const result = startSectMission(settled.state, missionId, Date.now());
+    saveGame(result.state);
+    setGame(result.state);
+    setErrorMessage(result.error ?? '');
+    if (settled.newEntries.length > 0) setNotice(settled.newEntries);
+  };
+
+  const handleExchangeReputation = (exchangeId: SectExchangeId) => {
+    if (!game) return;
+    const result = exchangeSectReputation(game, exchangeId, Date.now());
     saveGame(result.state);
     setGame(result.state);
     setErrorMessage(result.error ?? '');
@@ -382,8 +409,11 @@ const App = () => {
           {activeTab === 'people' && (
             <PeopleView
               social={game.social}
+              currentAction={game.character.currentAction}
               onResolveEvent={handleResolvePersonEvent}
               onJoinSect={handleJoinSect}
+              onStartMission={handleStartSectMission}
+              onExchangeReputation={handleExchangeReputation}
             />
           )}
           {activeTab === 'codex' && <CodexView game={game} />}
@@ -515,6 +545,9 @@ const CurrentActionCard = ({ action, now }: { action: GameState['character']['cu
   const explorationLocation = action.type === 'explore'
     ? EXPLORATION_LOCATIONS[action.locationId ?? 'qingstone-mountain']
     : null;
+  const sectMission = action.type === 'sect_mission' && action.missionId
+    ? getSectMission(action.missionId)
+    : null;
   const total = action.endsAt - action.startedAt;
   const progress = Math.min(100, Math.max(0, ((now - action.startedAt) / total) * 100));
   return (
@@ -522,8 +555,8 @@ const CurrentActionCard = ({ action, now }: { action: GameState['character']['cu
       <div className="action-icon large">{definition.icon}</div>
       <div className="action-card-main">
         <div className="action-card-top"><span className="eyebrow">CURRENT ACTION · 当前行动</span><strong>{formatRemaining(action.endsAt, now)}</strong></div>
-        <h3>{explorationLocation ? `${definition.label} · ${explorationLocation.label}` : definition.label}</h3>
-        <p>{explorationLocation ? explorationLocation.summary : definition.description}</p>
+        <h3>{explorationLocation ? `${definition.label} · ${explorationLocation.label}` : sectMission ? `${definition.label} · ${sectMission.title}` : definition.label}</h3>
+        <p>{explorationLocation ? explorationLocation.summary : sectMission ? sectMission.summary : definition.description}</p>
         <div className="progress-track action-progress"><div style={{ width: `${progress}%` }} /></div>
       </div>
     </div>
@@ -547,7 +580,7 @@ const CultivationView = ({ currentAction, now, cave, inventory, sectId, discover
   onBreakthrough: () => void;
 }) => {
   const disabled = Boolean(currentAction);
-  const regularActionTypes = (Object.keys(ACTIONS) as ActionType[]).filter((type) => type !== 'explore');
+  const regularActionTypes = (Object.keys(ACTIONS) as ActionType[]).filter((type) => type !== 'explore' && type !== 'sect_mission');
   const renderActionOption = (type: ActionType) => {
     const action = ACTIONS[type];
     const explorationLocation = type === 'explore' ? EXPLORATION_LOCATIONS[selectedLocationId] : null;
@@ -726,10 +759,13 @@ const formatSectEffects = (effects: ReturnType<typeof getSectEffects>) => {
   return labels.join(' · ');
 };
 
-const PeopleView = ({ social, onResolveEvent, onJoinSect }: {
+const PeopleView = ({ social, currentAction, onResolveEvent, onJoinSect, onStartMission, onExchangeReputation }: {
   social: GameState['social'];
+  currentAction: GameState['character']['currentAction'];
   onResolveEvent: (choiceId: string) => void;
   onJoinSect: (sectId: SectId) => void;
+  onStartMission: (missionId: SectMissionId) => void;
+  onExchangeReputation: (exchangeId: SectExchangeId) => void;
 }) => {
   const pendingEvent = social.pendingPersonEvent ? getPersonEvent(social.pendingPersonEvent.eventId) : null;
   const joinedSect = social.sect.sectId ? SECTS[social.sect.sectId] : null;
@@ -779,10 +815,47 @@ const PeopleView = ({ social, onResolveEvent, onJoinSect }: {
       <section className="sect-panel paper-card">
         <div className="social-panel-heading"><div><div className="eyebrow">A PLACE TO BELONG · 宗门</div><h3>{joinedSect ? `${joinedSect.name} · ${joinedSect.motto}` : '选择你的门墙'}</h3></div><span>{joinedSect ? `贡献 ${social.sect.contribution}` : social.sect.invited ? '已有引荐' : '尚未引荐'}</span></div>
         {joinedSect ? (
-          <div className="joined-sect">
-            <div className="joined-sect-icon">{joinedSect.icon}</div>
-            <div><strong>你已是{joinedSect.name}弟子</strong><p>{joinedSect.summary}</p><small className="sect-effects">{formatSectEffects(getSectEffects(joinedSect.id))}</small></div>
-          </div>
+          <>
+            <div className="joined-sect">
+              <div className="joined-sect-icon">{joinedSect.icon}</div>
+              <div><strong>你已是{joinedSect.name}弟子 · {getSectRank(social.sect.reputation)}</strong><p>{joinedSect.summary}</p><small className="sect-effects">声望 {social.sect.reputation} · {formatSectEffects(getSectEffects(joinedSect.id))}</small></div>
+            </div>
+            <div className="sect-mission-list">
+              <div className="sect-mission-heading"><div><div className="eyebrow">THE SECT HAS WORK · 宗门任务</div><h4>今日差事</h4></div><span>{currentAction ? '行动中' : '可安排一项'}</span></div>
+              <div className="mission-grid">
+                {getSectMissions(joinedSect.id).map((mission) => (
+                  <article className="mission-card" key={mission.id}>
+                    <div className="mission-card-top"><strong>{mission.title}</strong><span>{mission.durationMinutes} 分钟</span></div>
+                    <p>{mission.summary}</p>
+                    <small className="mission-risk">{mission.risk}</small>
+                    <small className="mission-reward">声望 +{mission.rewards.reputation} · 贡献 +{mission.rewards.contribution}{mission.rewards.spiritStones ? ` · 灵石 +${mission.rewards.spiritStones}` : ''}{mission.rewards.herbs ? ` · 灵草 +${mission.rewards.herbs}` : ''}{mission.rewards.techniqueFragments ? ` · 残页 +${mission.rewards.techniqueFragments}` : ''}</small>
+                    <button className="secondary-button" disabled={Boolean(currentAction)} onClick={() => onStartMission(mission.id)}>{currentAction ? '行动中' : '安排任务'}</button>
+                  </article>
+                ))}
+              </div>
+            </div>
+            <div className="sect-exchange-list">
+              <div className="sect-mission-heading"><div><div className="eyebrow">MERIT EXCHANGE · 声望兑换</div><h4>名册能换来什么</h4></div><span>当前声望 {social.sect.reputation}</span></div>
+              <div className="exchange-grid">
+                {Object.values(SECT_EXCHANGES).map((exchange) => {
+                  const canAfford = social.sect.reputation >= exchange.costReputation;
+                  const reward = exchange.rewards.spiritStones
+                    ? `灵石 +${exchange.rewards.spiritStones}`
+                    : exchange.rewards.herbs
+                      ? `灵草 +${exchange.rewards.herbs}`
+                      : `功法残页 +${exchange.rewards.techniqueFragments}`;
+                  return (
+                    <article className="exchange-card" key={exchange.id}>
+                      <strong>{exchange.label}</strong>
+                      <p>{exchange.summary}</p>
+                      <small>{reward} · 消耗声望 {exchange.costReputation}</small>
+                      <button className="secondary-button" disabled={!canAfford} onClick={() => onExchangeReputation(exchange.id)}>{canAfford ? '兑换' : `还差 ${exchange.costReputation - social.sect.reputation}`}</button>
+                    </article>
+                  );
+                })}
+              </div>
+            </div>
+          </>
         ) : social.sect.invited ? (
           <>
             <p className="sect-intro">玄松道人替你写下了引荐。宗门会改变你的日常回报，但这一世只能选择一处门墙。</p>

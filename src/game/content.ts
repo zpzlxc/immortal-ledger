@@ -77,6 +77,13 @@ export const ACTIONS: Record<
     description: '整理手边的残卷，尝试从断裂的口诀中还原功法。',
     risk: '风险：低，消耗一份草药作为安神香',
   },
+  sect_mission: {
+    label: '宗门任务',
+    icon: '令',
+    durationMinutes: 30,
+    description: '替宗门处理一件不大不小的差事，换取门中声望。',
+    risk: '风险：视任务而定',
+  },
 };
 
 export const REAL_MINUTE_TO_GAME_DAYS = 0.5;

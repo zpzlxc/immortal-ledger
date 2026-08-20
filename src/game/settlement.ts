@@ -13,6 +13,8 @@ import {
   getPersonEvent,
   getRelationshipStatus,
   getSectEffects,
+  getSectExchange,
+  getSectMission,
   PERSON_EVENTS,
   RELATIONSHIPS,
   SECTS,
@@ -37,6 +39,8 @@ import type {
   LedgerEntry,
   PersonEventId,
   SectId,
+  SectExchangeId,
+  SectMissionId,
   SettlementResult,
 } from './types';
 
@@ -61,6 +65,14 @@ const getNextPersonEvent = (
     return PERSON_EVENTS['lin-qiu-caravan'];
   }
   if (
+    action.type === 'explore' &&
+    hasCompletedPersonEvent(state, 'lin-qiu-caravan') &&
+    !hasCompletedPersonEvent(state, 'lin-qiu-ledger') &&
+    state.social.relationships['lin-qiu'].affinity >= 10
+  ) {
+    return PERSON_EVENTS['lin-qiu-ledger'];
+  }
+  if (
     action.type === 'study' &&
     state.cultivationPath.schoolId &&
     !hasCompletedPersonEvent(state, 'xuan-song-lesson')
@@ -68,11 +80,29 @@ const getNextPersonEvent = (
     return PERSON_EVENTS['xuan-song-lesson'];
   }
   if (
+    action.type === 'sect_mission' &&
+    state.social.sect.sectId &&
+    hasCompletedPersonEvent(state, 'xuan-song-lesson') &&
+    !hasCompletedPersonEvent(state, 'xuan-song-mountain-gate') &&
+    state.social.relationships['xuan-song'].affinity >= 10
+  ) {
+    return PERSON_EVENTS['xuan-song-mountain-gate'];
+  }
+  if (
     action.type === 'explore' &&
     action.locationId === 'nameless-well' &&
     !hasCompletedPersonEvent(state, 'nameless-well-soul')
   ) {
     return PERSON_EVENTS['nameless-well-soul'];
+  }
+  if (
+    action.type === 'explore' &&
+    action.locationId === 'nameless-well' &&
+    hasCompletedPersonEvent(state, 'nameless-well-soul') &&
+    !hasCompletedPersonEvent(state, 'nameless-well-echo') &&
+    state.social.relationships['nameless-soul'].affinity >= 10
+  ) {
+    return PERSON_EVENTS['nameless-well-echo'];
   }
   return null;
 };
@@ -160,6 +190,11 @@ const ACTION_PLAN_NOTES: Record<ActionType, readonly string[]> = {
     '你把残卷、灯盏和一份安神香摆好，准备和断裂的口诀耗上一阵。',
     '今晚的对手不是妖兽，而是残卷上缺掉的字，以及你自己的走神。',
     '你决定再读一遍那些不肯说完整话的口诀，看看它究竟藏了什么。',
+  ],
+  sect_mission: [
+    '宗门令牌在袖中微微发热，看来今天的差事不打算自己完成。',
+    '你把任务简报读了两遍，确认上面没有写“必死”二字，便收好行囊出发。',
+    '门中长老说得轻描淡写，仿佛山路、阵眼和妖兽都只是纸上的墨点。',
   ],
 };
 
@@ -310,9 +345,42 @@ const actionResult = (state: GameState, actionType: ActionType, completedAt: num
     }
   }
 
+  if (actionType === 'sect_mission') {
+    const missionId = state.character.currentAction?.missionId;
+    const mission = missionId ? getSectMission(missionId) : null;
+    if (mission && state.social.sect.sectId === mission.sectId) {
+      const rewards = mission.rewards;
+      inventory.spiritStones += rewards.spiritStones ?? 0;
+      inventory.herbs += rewards.herbs ?? 0;
+      inventory.techniqueFragments += rewards.techniqueFragments ?? 0;
+      character.realm.cultivation += rewards.cultivation ?? 0;
+      state.social.sect.reputation += rewards.reputation;
+      state.social.sect.contribution += rewards.contribution;
+      const risky = mission.id.endsWith('escort') || mission.id.endsWith('cure') || mission.id.endsWith('seal');
+      const suffered = risky && Math.random() < 0.22;
+      if (suffered) {
+        character.attributes.mentalState = Math.max(0, character.attributes.mentalState - 4);
+      }
+      title = `${mission.title}完成`;
+      body = `${mission.summary}你把任务交回宗门，门中执事没有夸你，只在名册上多添了一笔。${suffered ? '回程时的一点意外让你心神不宁了片刻。' : '这回没有留下多余的伤口。'}`;
+      changes.push(
+        `宗门声望 +${rewards.reputation}`,
+        `宗门贡献 +${rewards.contribution}`,
+        rewards.spiritStones ? `灵石 +${rewards.spiritStones}` : '',
+        rewards.herbs ? `灵草 +${rewards.herbs}` : '',
+        rewards.techniqueFragments ? `功法残页 +${rewards.techniqueFragments}` : '',
+        rewards.cultivation ? `修为 +${rewards.cultivation}` : '',
+        suffered ? '心境 -4' : '',
+      );
+    } else {
+      title = '宗门令未能对上名册';
+      body = '你带着一枚没有归属的令牌走了半天，最后只好把它放回桌上。长生簿没有替你虚报这笔功劳。';
+    }
+  }
+
   character.realm.cultivation += cultivationGain;
   const entry = createLedgerEntry(
-    actionType === 'explore' ? 'exploration' : 'action',
+    actionType === 'explore' ? 'exploration' : actionType === 'sect_mission' ? 'relationship' : 'action',
     title,
     body,
     changes,
@@ -445,32 +513,54 @@ export const startAction = (
   type: ActionType,
   now = Date.now(),
   locationId: ExplorationLocationId = 'qingstone-mountain',
+  missionId?: SectMissionId,
 ): GameState => {
   const state = structuredClone(input);
   const selectedLocationId = state.discoveredLocations.includes(locationId)
     ? locationId
     : 'qingstone-mountain';
   const selectedLocation = type === 'explore' ? getExplorationLocation(selectedLocationId) : null;
-  const duration = getActionDurationMinutes(type, state.cave, selectedLocationId, state.social?.sect?.sectId ?? null) * MINUTE_MS;
+  const duration = getActionDurationMinutes(type, state.cave, selectedLocationId, state.social?.sect?.sectId ?? null, missionId) * MINUTE_MS;
   state.character.currentAction = {
     id: `${now}-${type}`,
     type,
     startedAt: now,
     endsAt: now + duration,
     ...(type === 'explore' ? { locationId: selectedLocationId } : {}),
+    ...(type === 'sect_mission' && missionId ? { missionId } : {}),
   };
   state.lastSettledAt = now;
   state.ledger = [
     createLedgerEntry(
       'system',
       `已安排：${ACTIONS[type].label}`,
-      `${pick(ACTION_PLAN_NOTES[type])}${selectedLocation ? `${selectedLocation.label}：${selectedLocation.summary}` : ACTIONS[type].description}预计在 ${getActionDurationMinutes(type, state.cave, selectedLocationId, state.social?.sect?.sectId ?? null)} 分钟后完成。你可以关闭网页，回来时查看结果。`,
+      `${pick(ACTION_PLAN_NOTES[type])}${selectedLocation ? `${selectedLocation.label}：${selectedLocation.summary}` : ACTIONS[type].description}预计在 ${getActionDurationMinutes(type, state.cave, selectedLocationId, state.social?.sect?.sectId ?? null, missionId)} 分钟后完成。你可以关闭网页，回来时查看结果。`,
       [ACTIONS[type].label, selectedLocation?.risk ?? ACTIONS[type].risk],
       now,
     ),
     ...state.ledger,
   ].slice(0, 100);
   return state;
+};
+
+export const startSectMission = (
+  input: GameState,
+  missionId: SectMissionId,
+  now = Date.now(),
+): SocialMutationResult => {
+  const state = structuredClone(input);
+  state.social = state.social ?? createSocialState();
+  const mission = getSectMission(missionId);
+  if (!mission || state.social.sect.sectId !== mission.sectId) {
+    return { state, newEntries: [], error: '这项差事不属于你当前的宗门。' };
+  }
+  if (state.character.currentAction) {
+    return { state, newEntries: [], error: '你正在进行另一项行动，暂时无法接下宗门任务。' };
+  }
+  return {
+    state: startAction(state, 'sect_mission', now, 'qingstone-mountain', missionId),
+    newEntries: [],
+  };
 };
 
 export type TechniqueMutationResult = {
@@ -575,6 +665,13 @@ export const resolvePersonEvent = (
     return { state, newEntries: [], error: '这条人物事件的选项已经失效。' };
   }
 
+  if (
+    (choice.effects.spiritStones ?? 0) < 0 &&
+    state.inventory.spiritStones + (choice.effects.spiritStones ?? 0) < 0
+  ) {
+    return { state, newEntries: [], error: '手边灵石不够，无法选择这项处理方式。' };
+  }
+
   const relationship = state.social.relationships[event.relationshipId];
   relationship.affinity = Math.max(-100, Math.min(100, relationship.affinity + choice.effects.affinity));
   relationship.interactionCount += 1;
@@ -593,6 +690,9 @@ export const resolvePersonEvent = (
   state.character.attributes.karma += effects.karma ?? 0;
   state.character.attributes.fortune += effects.fortune ?? 0;
   if (effects.sectInvitation) state.social.sect.invited = true;
+  if (effects.sectReputation && state.social.sect.sectId) {
+    state.social.sect.reputation = Math.max(0, state.social.sect.reputation + effects.sectReputation);
+  }
 
   state.social.completedPersonEventIds = [
     ...state.social.completedPersonEventIds,
@@ -610,6 +710,7 @@ export const resolvePersonEvent = (
     effects.karma ? `因果 ${effects.karma > 0 ? '+' : ''}${effects.karma}` : '',
     effects.fortune ? `气运 ${effects.fortune > 0 ? '+' : ''}${effects.fortune}` : '',
     effects.sectInvitation ? '获得宗门引荐' : '',
+    effects.sectReputation ? `宗门声望 ${effects.sectReputation > 0 ? '+' : ''}${effects.sectReputation}` : '',
   ].filter(Boolean);
   const entry = createLedgerEntry(
     'relationship',
@@ -646,6 +747,42 @@ export const joinSect = (
     `拜入${sect.name}`,
     `${sect.motto}你在玄松道人的引荐下入了${sect.name}。宗门不会替你修行，但会让你少走一些不必要的弯路。`,
     ['宗门', sect.name, '初入门墙'],
+    now,
+  );
+  state.ledger = [entry, ...state.ledger].slice(0, 100);
+  return { state, newEntries: [entry] };
+};
+
+export const exchangeSectReputation = (
+  input: GameState,
+  exchangeId: SectExchangeId,
+  now = Date.now(),
+): SocialMutationResult => {
+  const state = structuredClone(input);
+  state.social = state.social ?? createSocialState();
+  if (!state.social.sect.sectId) {
+    return { state, newEntries: [], error: '尚未加入宗门，不能使用宗门名册。' };
+  }
+  const exchange = getSectExchange(exchangeId);
+  if (!exchange) return { state, newEntries: [], error: '这项兑换尚未登记在宗门名册上。' };
+  if (state.social.sect.reputation < exchange.costReputation) {
+    return { state, newEntries: [], error: `还需要 ${exchange.costReputation - state.social.sect.reputation} 点宗门声望。` };
+  }
+
+  state.social.sect.reputation -= exchange.costReputation;
+  state.inventory.spiritStones += exchange.rewards.spiritStones ?? 0;
+  state.inventory.herbs += exchange.rewards.herbs ?? 0;
+  state.inventory.techniqueFragments += exchange.rewards.techniqueFragments ?? 0;
+  const rewards = [
+    exchange.rewards.spiritStones ? `灵石 +${exchange.rewards.spiritStones}` : '',
+    exchange.rewards.herbs ? `灵草 +${exchange.rewards.herbs}` : '',
+    exchange.rewards.techniqueFragments ? `功法残页 +${exchange.rewards.techniqueFragments}` : '',
+  ].filter(Boolean);
+  const entry = createLedgerEntry(
+    'relationship',
+    `宗门兑换：${exchange.label}`,
+    `${exchange.summary}名册上的朱砂印记淡了一点，但你手里的东西实在了许多。`,
+    [`声望 -${exchange.costReputation}`, ...rewards],
     now,
   );
   state.ledger = [entry, ...state.ledger].slice(0, 100);

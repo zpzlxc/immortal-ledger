@@ -1,4 +1,4 @@
-export type ActionType = 'meditate' | 'overdrive' | 'explore' | 'study';
+export type ActionType = 'meditate' | 'overdrive' | 'explore' | 'study' | 'sect_mission';
 
 export type ExplorationLocationId = 'qingstone-mountain' | 'blackwind-valley' | 'nameless-well';
 
@@ -29,15 +29,31 @@ export type RelationshipState = {
 };
 
 export type SectId = 'qingxiao-sword-sect' | 'baicao-valley' | 'tianji-pavilion';
+export type SectMissionId =
+  | 'qingxiao-patrol'
+  | 'qingxiao-escort'
+  | 'baicao-gathering'
+  | 'baicao-cure'
+  | 'tianji-star-chart'
+  | 'tianji-seal';
 
 export type SectState = {
   sectId: SectId | null;
   invited: boolean;
   joinedAt: number | null;
   contribution: number;
+  reputation: number;
 };
 
-export type PersonEventId = 'lin-qiu-caravan' | 'xuan-song-lesson' | 'nameless-well-soul';
+export type PersonEventId =
+  | 'lin-qiu-caravan'
+  | 'lin-qiu-ledger'
+  | 'xuan-song-lesson'
+  | 'xuan-song-mountain-gate'
+  | 'nameless-well-soul'
+  | 'nameless-well-echo';
+
+export type SectExchangeId = 'exchange-spirit-stones' | 'exchange-herbs' | 'exchange-technique-fragments';
 
 export type PendingPersonEvent = {
   eventId: PersonEventId;
@@ -79,6 +95,7 @@ export type CurrentAction = {
   startedAt: number;
   endsAt: number;
   locationId?: ExplorationLocationId;
+  missionId?: SectMissionId;
 };
 
 export type Character = {

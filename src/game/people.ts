@@ -2,6 +2,8 @@ import type {
   PersonEventId,
   RelationshipId,
   SectId,
+  SectMissionId,
+  SectExchangeId,
   SocialState,
 } from './types';
 
@@ -117,6 +119,7 @@ export type PersonEventEffects = {
   karma?: number;
   fortune?: number;
   sectInvitation?: boolean;
+  sectReputation?: number;
 };
 
 export type PersonEventChoice = {
@@ -217,6 +220,87 @@ export const PERSON_EVENTS: Record<PersonEventId, PersonEventDefinition> = {
       },
     ],
   },
+  'lin-qiu-ledger': {
+    id: 'lin-qiu-ledger',
+    relationshipId: 'lin-qiu',
+    title: '账本上没有的名字',
+    eyebrow: 'LIN QIU · 林秋',
+    summary: '几次探索之后，林秋在你的洞府门口摊开一册旧账。账页上记着许多已经死去的商队，唯独有一行没有名字，墨迹还新得像昨夜才写下。',
+    choices: [
+      {
+        id: 'trace-the-name',
+        label: '陪她查这行字',
+        summary: '你们沿着旧账上的几个地名一路查下去，最后发现那不是欠账，而是一封迟到了很多年的求救信。',
+        effects: { affinity: 16, spiritStones: 12, karma: 1 },
+      },
+      {
+        id: 'buy-the-ledger',
+        label: '买下整册旧账',
+        summary: '你付了一笔不算便宜的灵石，把账本收进袖中。林秋说，真正贵的从来不是纸。',
+        effects: { affinity: 10, spiritStones: -8, techniqueFragments: 2 },
+      },
+      {
+        id: 'leave-it-alone',
+        label: '劝她别再追查',
+        summary: '有些名字没有被写进账本，或许正是因为它们不该再被任何人叫醒。',
+        effects: { affinity: -6, mentalState: 2 },
+      },
+    ],
+  },
+  'xuan-song-mountain-gate': {
+    id: 'xuan-song-mountain-gate',
+    relationshipId: 'xuan-song',
+    title: '山门外的第二封信',
+    eyebrow: 'XUAN SONG · 玄松道人',
+    summary: '你完成第一次宗门任务后，玄松道人在山门外等你。他看了一眼门中令牌，说真正的考验不是做完差事，而是做完之后还愿不愿意回头看看别人。',
+    choices: [
+      {
+        id: 'ask-for-guidance',
+        label: '请他指点下一步',
+        summary: '你没有急着邀功，只把任务里最不明白的地方一一问清。',
+        effects: { affinity: 14, cultivation: 8, mentalState: 3, sectReputation: 5 },
+      },
+      {
+        id: 'share-reward',
+        label: '分他一份任务所得',
+        summary: '你把一部分资源放到他手里。道人没有推辞，只说这比漂亮话更像修行。',
+        effects: { affinity: 20, spiritStones: -5, sectReputation: 8 },
+      },
+      {
+        id: 'keep-walking',
+        label: '谢过后继续赶路',
+        summary: '你知道他还会在山门外，于是没有把今天的答案当成唯一答案。',
+        effects: { affinity: 4, fortune: 1 },
+      },
+    ],
+  },
+  'nameless-well-echo': {
+    id: 'nameless-well-echo',
+    relationshipId: 'nameless-soul',
+    title: '回声学会了撒谎',
+    eyebrow: 'THE NAMELESS ECHO · 无名残魂',
+    summary: '你第二次下到无名古井时，井底先喊了一个陌生人的名字，又立刻改口叫你。无名残魂终于承认：它正在慢慢想起自己曾经骗过谁。',
+    choices: [
+      {
+        id: 'hear-the-lie',
+        label: '让它把谎说完',
+        summary: '你不急着揭穿它，直到那段谎言自己露出裂缝，井底才掉下一枚沾着旧血的玉扣。',
+        effects: { affinity: 16, techniqueFragments: 3, karma: 2 },
+      },
+      {
+        id: 'ask-your-name',
+        label: '问它记不记得你的名字',
+        summary: '回声沉默了很久，最后说：我记得你每次离开，却还没学会记住你为什么回来。',
+        effects: { affinity: 22, mentalState: -3, fortune: 2 },
+      },
+      {
+        id: 'cut-the-echo',
+        label: '斩断这段回声',
+        summary: '你用灵力斩断井壁上的旧痕，回声第一次没有追出来，只留下半句没说完的话。',
+        effects: { affinity: -12, mentalState: 5, karma: -1 },
+      },
+    ],
+  },
 };
 
 const EMPTY_SECT_EFFECTS: SectEffects = {
@@ -238,6 +322,7 @@ export const createSocialState = (): SocialState => ({
     invited: false,
     joinedAt: null,
     contribution: 0,
+    reputation: 0,
   },
   pendingPersonEvent: null,
   completedPersonEventIds: [],
@@ -256,3 +341,127 @@ export const getSectEffects = (sectId: SectId | null): SectEffects => {
 };
 
 export const getPersonEvent = (eventId: PersonEventId) => PERSON_EVENTS[eventId];
+
+export type SectMissionDefinition = {
+  id: SectMissionId;
+  sectId: SectId;
+  title: string;
+  summary: string;
+  risk: string;
+  durationMinutes: number;
+  rewards: {
+    reputation: number;
+    contribution: number;
+    spiritStones?: number;
+    herbs?: number;
+    techniqueFragments?: number;
+    cultivation?: number;
+  };
+};
+
+export const SECT_MISSIONS: Record<SectMissionId, SectMissionDefinition> = {
+  'qingxiao-patrol': {
+    id: 'qingxiao-patrol',
+    sectId: 'qingxiao-sword-sect',
+    title: '巡山听风',
+    summary: '沿着宗门外山路走一圈，确认最近没有妖兽把界碑当成磨爪石。',
+    risk: '风险：低，可能遇见野兽',
+    durationMinutes: 25,
+    rewards: { reputation: 12, contribution: 3, spiritStones: 8, cultivation: 6 },
+  },
+  'qingxiao-escort': {
+    id: 'qingxiao-escort',
+    sectId: 'qingxiao-sword-sect',
+    title: '护送剑胚',
+    summary: '把一柄还没开锋的剑胚送到山腰剑炉，路不远，但有人总爱在半路试剑。',
+    risk: '风险：中，可能损失心境',
+    durationMinutes: 40,
+    rewards: { reputation: 20, contribution: 5, spiritStones: 15, cultivation: 12 },
+  },
+  'baicao-gathering': {
+    id: 'baicao-gathering',
+    sectId: 'baicao-valley',
+    title: '辨认夜露草',
+    summary: '在天亮前分辨出药田里混进来的夜露草，慢一步它们就会和普通野草长得一模一样。',
+    risk: '风险：低，消耗耐心而不是灵力',
+    durationMinutes: 30,
+    rewards: { reputation: 12, contribution: 3, herbs: 5, techniqueFragments: 1 },
+  },
+  'baicao-cure': {
+    id: 'baicao-cure',
+    sectId: 'baicao-valley',
+    title: '替山民熬药',
+    summary: '山民送来一锅没人敢碰的苦药。你需要先判断药性，再决定要不要把它端上桌。',
+    risk: '风险：中，判断失误会损失心境',
+    durationMinutes: 45,
+    rewards: { reputation: 20, contribution: 5, herbs: 8, cultivation: 8 },
+  },
+  'tianji-star-chart': {
+    id: 'tianji-star-chart',
+    sectId: 'tianji-pavilion',
+    title: '补全星图',
+    summary: '天机阁缺了一角星图，没人知道缺的是哪一颗星，只知道每个人都说自己看见过。',
+    risk: '风险：低，考验悟性',
+    durationMinutes: 35,
+    rewards: { reputation: 12, contribution: 3, techniqueFragments: 2, cultivation: 5 },
+  },
+  'tianji-seal': {
+    id: 'tianji-seal',
+    sectId: 'tianji-pavilion',
+    title: '封存倒转阵眼',
+    summary: '一枚阵眼在夜里自行倒转，阁中长老让你去把它按回原处，并假装没有听见里面的叹气声。',
+    risk: '风险：中，可能牵动心境',
+    durationMinutes: 50,
+    rewards: { reputation: 20, contribution: 5, techniqueFragments: 3, cultivation: 10 },
+  },
+};
+
+export const getSectMission = (missionId: SectMissionId) => SECT_MISSIONS[missionId];
+
+export const getSectMissions = (sectId: SectId | null) =>
+  sectId ? Object.values(SECT_MISSIONS).filter((mission) => mission.sectId === sectId) : [];
+
+export const getSectRank = (reputation: number) => {
+  if (reputation >= 120) return '门中执事';
+  if (reputation >= 60) return '内门弟子';
+  if (reputation >= 20) return '记名弟子';
+  return '外门弟子';
+};
+
+export type SectExchangeDefinition = {
+  id: SectExchangeId;
+  label: string;
+  summary: string;
+  costReputation: number;
+  rewards: {
+    spiritStones?: number;
+    herbs?: number;
+    techniqueFragments?: number;
+  };
+};
+
+export const SECT_EXCHANGES: Record<SectExchangeId, SectExchangeDefinition> = {
+  'exchange-spirit-stones': {
+    id: 'exchange-spirit-stones',
+    label: '换取行路灵石',
+    summary: '用门中声望换一小袋不问来处的灵石，适合还没攒够路费的时候。',
+    costReputation: 15,
+    rewards: { spiritStones: 20 },
+  },
+  'exchange-herbs': {
+    id: 'exchange-herbs',
+    label: '领取药田配额',
+    summary: '凭名册上的功劳领取一批基础灵草，百草谷弟子会额外多看你一眼。',
+    costReputation: 12,
+    rewards: { herbs: 5 },
+  },
+  'exchange-technique-fragments': {
+    id: 'exchange-technique-fragments',
+    label: '查阅残卷副本',
+    summary: '用声望换取几页可带走的副本，纸上没有完整功法，却足够让某条思路继续。',
+    costReputation: 25,
+    rewards: { techniqueFragments: 3 },
+  },
+};
+
+export const getSectExchange = (exchangeId: SectExchangeId) => SECT_EXCHANGES[exchangeId];
