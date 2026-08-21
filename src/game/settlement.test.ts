@@ -4,12 +4,18 @@ import {
   BREAKTHROUGH_FAILURE_COOLDOWN_MINUTES,
   MAX_OFFLINE_MINUTES,
   REAL_MINUTE_TO_GAME_DAYS,
+  SECT_DEFECTION_COOLDOWN_MINUTES,
 } from './content';
 import { createNewGame, normalizeGameState } from './save';
+import { getWorldCycle } from './exploration';
 import {
   getBreakthroughStartError,
   getActionStartError,
+  defectSect,
+  joinSect,
+  promoteSectPosition,
   settleGame,
+  resolveExplorationEvent,
   resolvePersonEvent,
   startBreakthrough,
   startAction,
@@ -201,6 +207,109 @@ describe('settlement rules', () => {
     }
   });
 
+  it('promotes sect positions and makes defection costly before rejoining', () => {
+    const state = createGame();
+    state.social.sect.sectId = 'qingxiao-sword-sect';
+    state.social.sect.invited = true;
+    state.social.sect.positionId = 'outer-disciple';
+    state.social.sect.reputation = 60;
+    state.social.sect.contribution = 12;
+
+    const inner = promoteSectPosition(state, now);
+    expect(inner.error).toBeUndefined();
+    expect(inner.state.social.sect.positionId).toBe('inner-disciple');
+    expect(inner.state.social.sect.contribution).toBe(6);
+
+    inner.state.social.sect.reputation = 120;
+    inner.state.social.sect.contribution = 30;
+    const steward = promoteSectPosition(inner.state, now + MINUTE_MS);
+    expect(steward.error).toBeUndefined();
+    expect(steward.state.social.sect.positionId).toBe('sect-steward');
+    expect(steward.state.social.sect.contribution).toBe(15);
+
+    const mission = settleGame(
+      startAction(steward.state, 'sect_mission', now + 2 * MINUTE_MS, 'qingstone-mountain', 'qingxiao-patrol', () => 0),
+      now + 30 * MINUTE_MS,
+      () => 0.99,
+    );
+    expect(mission.state.social.sect.contribution).toBe(21);
+
+    mission.state.character.attributes.karma = 5;
+    mission.state.character.attributes.fortune = 5;
+    const defected = defectSect(mission.state, now + 31 * MINUTE_MS);
+    expect(defected.error).toBeUndefined();
+    expect(defected.state.social.sect.sectId).toBeNull();
+    expect(defected.state.social.sect.positionId).toBeNull();
+    expect(defected.state.social.sect.reputation).toBe(0);
+    expect(defected.state.social.sect.contribution).toBe(0);
+    expect(defected.state.social.sect.defectionCount).toBe(1);
+    expect(defected.state.social.sect.cooldownUntil).toBe(
+      now + (31 + SECT_DEFECTION_COOLDOWN_MINUTES) * MINUTE_MS,
+    );
+    expect(defected.state.character.attributes.karma).toBe(3);
+    expect(defected.state.character.attributes.fortune).toBe(4);
+
+    const tooSoon = joinSect(defected.state, 'baicao-valley', now + 32 * MINUTE_MS);
+    expect(tooSoon.error).toContain('叛门余波未散');
+    const rejoined = joinSect(
+      defected.state,
+      'baicao-valley',
+      now + (31 + SECT_DEFECTION_COOLDOWN_MINUTES) * MINUTE_MS,
+    );
+    expect(rejoined.error).toBeUndefined();
+    expect(rejoined.state.social.sect.positionId).toBe('outer-disciple');
+  });
+
+  it('supports conditional and repeatable exploration events across changing skies', () => {
+    const repeatableState = createGame();
+    repeatableState.social.completedPersonEventIds = ['lin-qiu-caravan', 'lin-qiu-ledger'];
+    repeatableState.completedExplorationEventIds = ['qingstone-red-bell', 'qingstone-fox-path'];
+    expect(getWorldCycle(repeatableState).seasonId).toBe('spring');
+    expect(getWorldCycle(repeatableState).weatherId).toBe('rain');
+    const repeatableSettled = settleGame(
+      startAction(repeatableState, 'explore', now, 'qingstone-mountain', undefined, () => 0.1),
+      now + 15 * MINUTE_MS,
+      () => 0.1,
+    );
+
+    expect(repeatableSettled.state.pendingExplorationEvent?.eventId).toBe('qingstone-spring-rain');
+    const repeatableResolved = resolveExplorationEvent(
+      repeatableSettled.state,
+      'drink-spring-rain',
+      now + 15 * MINUTE_MS,
+    );
+    expect(repeatableResolved.error).toBeUndefined();
+    expect(repeatableResolved.state.completedExplorationEventIds).not.toContain('qingstone-spring-rain');
+    expect(repeatableResolved.state.lastExplorationEventId).toBe('qingstone-spring-rain');
+
+    const conditionalState = createGame();
+    conditionalState.social.completedPersonEventIds = ['lin-qiu-caravan', 'lin-qiu-ledger'];
+    conditionalState.character.attributes.physique = 12;
+    conditionalState.completedExplorationEventIds = [
+      'qingstone-red-bell',
+      'qingstone-fox-path',
+      'qingstone-spring-rain',
+      'qingstone-star-moth',
+    ];
+    conditionalState.lastExplorationEventId = 'qingstone-spring-rain';
+    const conditionalSettled = settleGame(
+      startAction(conditionalState, 'explore', now, 'qingstone-mountain', undefined, () => 0.1),
+      now + 15 * MINUTE_MS,
+      () => 0.1,
+    );
+
+    expect(conditionalSettled.state.pendingExplorationEvent?.eventId).toBe('qingstone-root-script');
+
+    const nextSkyState = repeatableResolved.state;
+    nextSkyState.character.ageDays = 16 * 365 - 50;
+    const starfallSettled = settleGame(
+      startAction(nextSkyState, 'explore', now + 20 * MINUTE_MS, 'qingstone-mountain', undefined, () => 0.1),
+      now + 35 * MINUTE_MS,
+      () => 0.1,
+    );
+    expect(starfallSettled.state.pendingExplorationEvent?.eventId).toBe('qingstone-star-moth');
+  });
+
   it('rejects breakthrough preparation without enough spirit stones', () => {
     const state = createGame();
     state.character.realm.cultivation = state.character.realm.cultivationRequired;
@@ -339,17 +448,19 @@ describe('settlement rules', () => {
     delete legacy.social;
     delete legacy.pendingExplorationEvent;
     delete legacy.completedExplorationEventIds;
+    delete legacy.lastExplorationEventId;
     delete (legacy.character as Partial<GameState['character']>).injury;
     delete (legacy.character as Partial<GameState['character']>).breakthroughCooldownUntil;
 
     const normalized = normalizeGameState(legacy as GameState);
 
-    expect(normalized.schemaVersion).toBeGreaterThanOrEqual(9);
+    expect(normalized.schemaVersion).toBeGreaterThanOrEqual(11);
     expect(normalized.cave).toBeDefined();
     expect(normalized.cultivationPath).toBeDefined();
     expect(normalized.social).toBeDefined();
     expect(normalized.pendingExplorationEvent).toBeNull();
     expect(normalized.completedExplorationEventIds).toEqual([]);
+    expect(normalized.lastExplorationEventId).toBeNull();
     expect(normalized.character.injury).toBeNull();
     expect(normalized.character.breakthroughCooldownUntil).toBeNull();
   });

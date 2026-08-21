@@ -118,6 +118,7 @@ export const REAL_MINUTE_TO_GAME_DAYS = 0.5;
 export const MAX_OFFLINE_MINUTES = 8 * 60;
 export const BREAKTHROUGH_COST_SPIRIT_STONES = 10;
 export const BREAKTHROUGH_FAILURE_COOLDOWN_MINUTES = 60;
+export const SECT_DEFECTION_COOLDOWN_MINUTES = 120;
 export const SAVE_KEY = 'immortal-ledger-save-v1';
 
 export const formatRealm = (major: string, stage: number) => {

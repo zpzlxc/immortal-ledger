@@ -161,6 +161,11 @@ button:disabled { cursor: not-allowed; }
 .heading-resource { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; color: var(--gold); font: 10px Arial, sans-serif; padding-top: 5px; white-space: nowrap; }
 .heading-resource strong { color: var(--red); font: 22px Georgia, serif; }
 .heading-stamp.built { color: var(--green); border-color: rgba(113,128,92,.5); }
+.world-cycle-card { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 16px 20px; background: #edf0e7; border-color: #d3dbc8; }
+.world-cycle-card h3 { color: #53634b; font-size: 16px; font-weight: 600; margin: 7px 0 5px; }
+.world-cycle-card p { color: #6f7965; font-size: 11px; line-height: 1.7; margin: 0; max-width: 700px; }
+.world-cycle-omen { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; color: var(--green); font-size: 10px; white-space: nowrap; padding-top: 3px; }
+.world-cycle-omen strong { color: #53634b; font: 17px Georgia, serif; }
 .breakthrough-card { padding: 21px 23px; display: flex; align-items: center; justify-content: space-between; gap: 20px; background: #f5ead1; border: 1px solid #e5ce9e; }
 .breakthrough-card h3 { font-size: 15px; font-weight: 600; margin: 7px 0 5px; }
 .breakthrough-card p { color: #8b7555; font-size: 12px; margin: 0; }
@@ -292,6 +297,10 @@ button:disabled { cursor: not-allowed; }
 .joined-sect-icon { background: rgba(255,255,255,.5); }
 .joined-sect strong { font-size: 13px; font-weight: 600; }
 .joined-sect p { min-height: 0; margin: 6px 0; }
+.sect-position-panel { margin-top: 12px; padding: 14px; background: #f5ead1; border: 1px solid #e5ce9e; }
+.sect-position-panel p { color: #8b7555; font-size: 11px; line-height: 1.7; margin: 0 0 8px; }
+.sect-position-panel small { display: block; color: #9a835f; font-size: 9px; line-height: 1.6; }
+.sect-position-panel .secondary-button { margin-top: 11px; }
 .sect-mission-list { margin-top: 17px; padding-top: 16px; border-top: 1px solid rgba(142,111,70,.16); }
 .sect-mission-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 15px; margin-bottom: 12px; }
 .sect-mission-heading h4 { font-size: 14px; font-weight: 600; margin: 6px 0 0; }
@@ -313,6 +322,12 @@ button:disabled { cursor: not-allowed; }
 .exchange-card p { color: #756b60; font-size: 10px; line-height: 1.65; min-height: 49px; margin: 9px 0 7px; }
 .exchange-card small { color: var(--green); font-size: 9px; line-height: 1.5; min-height: 27px; }
 .exchange-card .secondary-button { align-self: flex-start; margin-top: 11px; }
+.sect-defection-panel { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-top: 17px; padding: 14px; background: #f6e4df; border: 1px solid #e3bdb4; }
+.sect-defection-panel strong { color: var(--red); font-size: 12px; }
+.sect-defection-panel p { color: #8d675f; font-size: 10px; line-height: 1.65; margin: 5px 0 0; }
+.danger-button { flex: 0 0 auto; color: var(--red); background: #edd0c9; border: 1px solid #d9a9a0; padding: 8px 13px; font-size: 11px; white-space: nowrap; }
+.danger-button:hover:not(:disabled) { background: #e5beb5; }
+.danger-button:disabled { color: #a99b8a; background: #e7e0d6; border-color: #d8d0c5; }
 .sect-locked { display: flex; align-items: center; gap: 15px; padding: 16px; background: rgba(248,242,232,.42); border: 1px dashed rgba(142,111,70,.25); }
 .sect-locked .locked-icon { color: var(--gold); font-size: 25px; }
 .sect-locked strong { font-size: 12px; }
@@ -357,6 +372,39 @@ button:disabled { cursor: not-allowed; }
 .building-effect { display: block; color: var(--green); font-size: 10px; line-height: 1.6; min-height: 33px; }
 .building-button { width: 100%; margin-top: 14px; overflow: hidden; text-overflow: ellipsis; }
 .codex-grid { display: grid; gap: 11px; }
+.codex-overview { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 20px; background: #edf0e7; border-color: #d3dbc8; }
+.codex-overview h3 { color: #53634b; font-size: 17px; font-weight: 600; margin: 7px 0 5px; }
+.codex-overview p { color: #6f7965; font-size: 11px; line-height: 1.7; margin: 0; max-width: 700px; }
+.codex-overview-stat { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; color: var(--green); font-size: 10px; white-space: nowrap; }
+.codex-overview-stat strong { color: #53634b; font: 23px Georgia, serif; }
+.codex-section { padding: 20px; }
+.codex-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 15px; margin-bottom: 14px; }
+.codex-section-heading h3 { font-size: 16px; font-weight: 600; margin: 7px 0 0; }
+.codex-section-heading > span { color: var(--gold); font: 10px Arial, sans-serif; padding-top: 4px; white-space: nowrap; }
+.codex-record-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; }
+.codex-record { display: flex; align-items: flex-start; gap: 10px; min-width: 0; padding: 13px; background: rgba(248,242,232,.48); border: 1px solid rgba(142,111,70,.16); }
+.codex-record.locked { opacity: .58; }
+.codex-record-mark { width: 24px; height: 24px; flex: 0 0 24px; display: grid; place-items: center; color: var(--red); border: 1px solid rgba(159,67,53,.28); font-size: 12px; }
+.codex-record-body { min-width: 0; }
+.codex-record-body small { display: block; color: var(--gold); font: 9px Arial, sans-serif; letter-spacing: .4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.codex-record-body strong { display: block; font-size: 12px; font-weight: 600; margin-top: 6px; }
+.codex-record-body p { color: #756b60; font-size: 10px; line-height: 1.65; margin: 8px 0; }
+.codex-record-body > span { color: var(--green); font-size: 9px; }
+.codex-technique-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 9px; }
+.codex-technique-card { min-width: 0; padding: 14px; background: rgba(248,242,232,.48); border: 1px solid rgba(142,111,70,.16); }
+.codex-technique-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.codex-technique-top small { display: block; color: var(--gold); font: 9px Arial, sans-serif; }
+.codex-technique-top strong { display: block; font-size: 13px; font-weight: 600; margin-top: 6px; }
+.codex-technique-top > span { color: var(--green); font: 10px Arial, sans-serif; white-space: nowrap; }
+.codex-technique-card p { color: #756b60; font-size: 10px; line-height: 1.65; min-height: 34px; margin: 12px 0 9px; }
+.codex-branch-list { display: flex; flex-wrap: wrap; gap: 5px; }
+.codex-branch-list span { color: var(--muted); background: #e9e0d2; padding: 4px 6px; font-size: 9px; }
+.codex-branch-list span.unlocked { color: var(--green); background: #e2eadb; }
+.codex-summary-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 11px; }
+.codex-summary-card { min-width: 0; padding: 18px 20px; }
+.codex-summary-card h3 { font-size: 16px; font-weight: 600; margin: 8px 0 6px; }
+.codex-summary-card p { color: #756b60; font-size: 11px; line-height: 1.7; margin: 0 0 9px; }
+.codex-summary-card small { color: var(--muted); font-size: 9px; line-height: 1.6; }
 .codex-card { display: flex; align-items: center; gap: 16px; background: var(--paper); border: 1px solid rgba(142,111,70,.15); padding: 12px 20px 12px 12px; }
 .codex-card.locked { opacity: .6; }
 .codex-art { width: 105px; height: 64px; flex: 0 0 105px; display: grid; place-items: center; background-color: #e7ddcb; background-position: center; background-size: cover; position: relative; overflow: hidden; color: var(--paper); font-size: 18px; }
@@ -431,6 +479,7 @@ button:disabled { cursor: not-allowed; }
   .school-grid { grid-template-columns: repeat(2, 1fr); }
   .cultivation-pulse-grid { grid-template-columns: repeat(2, 1fr); }
   .event-choice-grid, .relationship-grid, .sect-grid, .mission-grid, .exchange-grid { grid-template-columns: 1fr; }
+  .codex-record-grid, .codex-technique-grid, .codex-summary-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 650px) {
@@ -457,8 +506,13 @@ button:disabled { cursor: not-allowed; }
   .action-grid { grid-template-columns: 1fr; }
   .school-grid, .technique-branch-grid { grid-template-columns: 1fr; }
   .event-choice-grid, .relationship-grid, .sect-grid, .mission-grid, .exchange-grid { grid-template-columns: 1fr; }
+  .codex-overview, .codex-section-heading { flex-direction: column; gap: 9px; }
+  .codex-overview-stat, .codex-section-heading > span { align-items: flex-start; }
+  .codex-record-grid, .codex-technique-grid, .codex-summary-grid { grid-template-columns: 1fr; }
   .location-grid { grid-template-columns: 1fr; }
   .exploration-panel-heading { flex-direction: column; gap: 8px; }
+  .world-cycle-card { flex-direction: column; gap: 10px; }
+  .world-cycle-omen { align-items: flex-start; }
   .cave-overview { grid-template-columns: 1fr; gap: 16px; }
   .cave-stored-grid { justify-content: space-between; }
   .building-grid { grid-template-columns: 1fr; }
@@ -466,6 +520,8 @@ button:disabled { cursor: not-allowed; }
   .breakthrough-card .primary-button { width: 100%; }
   .foundation-trial-section .action-option { flex-direction: column; }
   .foundation-trial-section .action-option > .secondary-button { align-self: stretch; width: 100%; }
+  .sect-defection-panel { align-items: flex-start; flex-direction: column; }
+  .sect-defection-panel .danger-button { width: 100%; }
   .injury-treatment-panel { align-items: flex-start; flex-direction: column; }
   .injury-treatment-panel .primary-button { width: 100%; }
   .pending-event-card { align-items: flex-start; flex-direction: column; }

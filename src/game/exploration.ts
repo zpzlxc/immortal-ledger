@@ -64,6 +64,57 @@ export const isExplorationLocationUnlocked = (
 export const getExplorationLocation = (locationId?: ExplorationLocationId) =>
   EXPLORATION_LOCATIONS[locationId ?? 'qingstone-mountain'];
 
+export type WorldSeasonId = 'spring' | 'summer' | 'autumn' | 'winter';
+export type WorldWeatherId = 'clear' | 'rain' | 'wind' | 'mist';
+export type WorldOmenId = 'quiet-stars' | 'falling-stars' | 'red-moon';
+
+export type WorldCycle = {
+  seasonId: WorldSeasonId;
+  seasonLabel: string;
+  weatherId: WorldWeatherId;
+  weatherLabel: string;
+  omenId: WorldOmenId;
+  omenLabel: string;
+  summary: string;
+};
+
+const SEASONS: Array<{ id: WorldSeasonId; label: string; summary: string }> = [
+  { id: 'spring', label: '春生', summary: '草木先于人间醒来，灵脉也更容易露出细微的纹路。' },
+  { id: 'summer', label: '夏盛', summary: '日火旺盛，适合追踪灵兽和淬炼体魄。' },
+  { id: 'autumn', label: '秋藏', summary: '风里藏着旧事，残碑、落叶与被掩住的线索更容易重见天日。' },
+  { id: 'winter', label: '冬寂', summary: '万物收声，只有神识足够敏锐的人还能听见雪下的回响。' },
+];
+
+const WEATHER = [
+  { id: 'clear' as const, label: '晴空', summary: '天光开阔，远处的微小变化也无处藏身。' },
+  { id: 'rain' as const, label: '灵雨', summary: '雨丝带着淡淡灵气，泥土和石缝里都有新的气息。' },
+  { id: 'wind' as const, label: '罡风', summary: '风势忽紧忽松，适合寻找被吹散、也可能被吹醒的东西。' },
+  { id: 'mist' as const, label: '山雾', summary: '雾气遮住了远路，却会把近处的痕迹放大。' },
+];
+
+const OMENS = [
+  { id: 'quiet-stars' as const, label: '星河静', summary: '星位沉默，因果暂时没有明显的偏转。' },
+  { id: 'falling-stars' as const, label: '流星雨', summary: '天外有光坠落，旧地图上没有标注的地方可能短暂显形。' },
+  { id: 'red-moon' as const, label: '赤月照井', summary: '赤月映在水与石上，和名字、回声有关的旧事更容易浮出。' },
+];
+
+export const getWorldCycle = (state: GameState): WorldCycle => {
+  const ageDay = Math.max(0, Math.floor(state.character.ageDays));
+  const dayOfYear = ageDay % 360;
+  const season = SEASONS[Math.floor(dayOfYear / 90) % SEASONS.length];
+  const weather = WEATHER[Math.floor(dayOfYear / 15) % WEATHER.length];
+  const omen = OMENS[Math.floor(dayOfYear / 30) % OMENS.length];
+  return {
+    seasonId: season.id,
+    seasonLabel: season.label,
+    weatherId: weather.id,
+    weatherLabel: weather.label,
+    omenId: omen.id,
+    omenLabel: omen.label,
+    summary: `${season.summary}${weather.summary}${omen.summary}`,
+  };
+};
+
 export type ExplorationEventEffects = {
   spiritStones?: number;
   herbs?: number;
@@ -90,6 +141,8 @@ export type ExplorationEventDefinition = {
   eyebrow: string;
   summary: string;
   choices: ExplorationEventChoice[];
+  repeatable?: boolean;
+  condition?: (state: GameState) => boolean;
 };
 
 export const EXPLORATION_EVENTS: Record<ExplorationEventId, ExplorationEventDefinition> = {
@@ -141,6 +194,83 @@ export const EXPLORATION_EVENTS: Record<ExplorationEventId, ExplorationEventDefi
       },
     ],
   },
+  'qingstone-spring-rain': {
+    id: 'qingstone-spring-rain',
+    locationId: 'qingstone-mountain',
+    title: '春雨落进旧药圃',
+    eyebrow: 'SEASONAL TRACE · 春生灵雨',
+    summary: '春雨沿着山脊落下，旧药圃里有一层新泥正在缓慢呼吸。你可以趁雨势未停，把这场灵气留在自己身上，也可以把它还给山野。',
+    repeatable: true,
+    condition: (state) => {
+      const cycle = getWorldCycle(state);
+      return cycle.seasonId === 'spring' && cycle.weatherId === 'rain';
+    },
+    choices: [
+      {
+        id: 'drink-spring-rain',
+        label: '引雨入脉',
+        summary: '你盘坐在药圃边，让雨水顺着灵脉走过一周天。泥土里的灵草也因此长得更稳。',
+        effects: { herbs: 2, cultivation: 6, mentalState: 1 },
+      },
+      {
+        id: 'follow-spring-roots',
+        label: '顺雨找根',
+        summary: '你沿着雨水汇聚的方向挖出一截旧根，根须上残留着不属于这一季的灵力。',
+        effects: { spiritSense: 1, herbs: 1, karma: 1 },
+      },
+      {
+        id: 'shelter-spring-rain',
+        label: '在树下避雨',
+        summary: '你没有急着取巧，只在树洞里发现几枚被雨水洗亮的灵石。',
+        effects: { spiritStones: 6, mentalState: 2, fortune: -1 },
+      },
+    ],
+  },
+  'qingstone-star-moth': {
+    id: 'qingstone-star-moth',
+    locationId: 'qingstone-mountain',
+    title: '流星落在蝶翼上',
+    eyebrow: 'CELESTIAL OMEN · 流星雨',
+    summary: '流星划过山口时，一群银色山蛾忽然离开树影，像是要带你去看一处刚刚被天光擦亮的石台。',
+    repeatable: true,
+    condition: (state) => getWorldCycle(state).omenId === 'falling-stars',
+    choices: [
+      {
+        id: 'follow-star-moths',
+        label: '跟随银蛾',
+        summary: '银蛾落在一方新裂的石台上，石缝中凝着一点天外微尘。',
+        effects: { techniqueFragments: 1, spiritSense: 1, cultivation: 4 },
+      },
+      {
+        id: 'catch-star-dust',
+        label: '收起星尘',
+        summary: '你用灵石承住落尘，星光很快熄灭，却留下了一点稳定的暖意。',
+        effects: { spiritStones: -3, fortune: 2, mentalState: 2 },
+      },
+    ],
+  },
+  'qingstone-root-script': {
+    id: 'qingstone-root-script',
+    locationId: 'qingstone-mountain',
+    title: '树根下的无字诀',
+    eyebrow: 'CONDITION TRACE · 根骨渐成',
+    summary: '你用手掌按住老树根部时，才发现树皮下藏着一段无字口诀。它不传声音，只传一种让身体先于意识记住的节奏。',
+    condition: (state) => state.character.attributes.physique >= 12,
+    choices: [
+      {
+        id: 'learn-root-script',
+        label: '让身体记住它',
+        summary: '你没有强行拆解口诀，而是让每一次呼吸都贴着树根的节奏走。根骨因此更沉，气息也更稳。',
+        effects: { physique: 1, cultivation: 14, mentalState: 2 },
+      },
+      {
+        id: 'copy-root-script',
+        label: '把它抄成残页',
+        summary: '你将无字诀拓在薄纸上，纸面只留下三道浅痕，却足够让后来者继续追问。',
+        effects: { techniqueFragments: 2, spiritSense: 1, karma: 1 },
+      },
+    ],
+  },
   'blackwind-broken-stele': {
     id: 'blackwind-broken-stele',
     locationId: 'blackwind-valley',
@@ -189,6 +319,74 @@ export const EXPLORATION_EVENTS: Record<ExplorationEventId, ExplorationEventDefi
       },
     ],
   },
+  'blackwind-wind-tide': {
+    id: 'blackwind-wind-tide',
+    locationId: 'blackwind-valley',
+    title: '罡风换了一口气',
+    eyebrow: 'WEATHER TRACE · 黑风罡潮',
+    summary: '黑风谷的风忽然停了一瞬，下一口气却从地底涌上来。碎石在风中排成一条只存在片刻的路。',
+    repeatable: true,
+    condition: (state) => getWorldCycle(state).weatherId === 'wind',
+    choices: [
+      {
+        id: 'hold-wind-line',
+        label: '站在风口不退',
+        summary: '你用根骨撑住身体，风过之后才发现袖口里多了一枚被磨圆的灵石。',
+        effects: { physique: 1, spiritStones: 8, mentalState: -2 },
+      },
+      {
+        id: 'read-wind-path',
+        label: '记下风路',
+        summary: '你不与罡风硬碰，只记住它每一次转折。那条路后来在脑中化成了一页残缺的阵图。',
+        effects: { techniqueFragments: 1, spiritSense: 1, karma: 1 },
+      },
+    ],
+  },
+  'blackwind-sand-map': {
+    id: 'blackwind-sand-map',
+    locationId: 'blackwind-valley',
+    title: '秋沙写成一张地图',
+    eyebrow: 'SEASONAL TRACE · 秋藏风沙',
+    summary: '秋风把细沙吹过断碑，短暂露出一张没有终点的地图。地图上的每一处红点，都像有人刚刚走过。',
+    repeatable: true,
+    condition: (state) => getWorldCycle(state).seasonId === 'autumn',
+    choices: [
+      {
+        id: 'trace-sand-map',
+        label: '沿红点走一段',
+        summary: '你跟着红点走到一处废弃石室，里面只剩一小袋灵石，却没有留下脚印的人。',
+        effects: { spiritStones: 12, cultivation: 5, fortune: 1 },
+      },
+      {
+        id: 'copy-sand-map',
+        label: '先把地图记下',
+        summary: '你没有急着追踪，而是把每一条风痕记进神识。回头时，地图已经被秋沙重新盖住。',
+        effects: { techniqueFragments: 2, spiritSense: 1, mentalState: 2 },
+      },
+    ],
+  },
+  'blackwind-sealed-word': {
+    id: 'blackwind-sealed-word',
+    locationId: 'blackwind-valley',
+    title: '石缝里有人封了一句话',
+    eyebrow: 'CONDITION TRACE · 神识过谷',
+    summary: '你的神识穿过断碑底部时，听见石缝里传来半句话。那不是风声，而是有人在很久以前，把一句提醒封进了山里。',
+    condition: (state) => state.character.attributes.spiritSense >= 14 && state.character.realm.stage >= 3,
+    choices: [
+      {
+        id: 'unseal-the-word',
+        label: '解开封字',
+        summary: '封字裂开后，一段关于黑风谷旧主的记录浮出石面。你只取走最关键的几笔。',
+        effects: { techniqueFragments: 3, cultivation: 12, karma: 1 },
+      },
+      {
+        id: 'guard-the-word',
+        label: '替它继续守口',
+        summary: '你没有把旧事带出山谷，只在封字旁留下自己的灵息，让它不至于被风磨平。',
+        effects: { mentalState: 5, fortune: 2, karma: 2 },
+      },
+    ],
+  },
   'nameless-reversed-name': {
     id: 'nameless-reversed-name',
     locationId: 'nameless-well',
@@ -228,6 +426,74 @@ export const EXPLORATION_EVENTS: Record<ExplorationEventId, ExplorationEventDefi
         label: '不替它续火',
         summary: '你把空灯放回原处，只在灯下找到几枚被潮气浸亮的灵石，随后立即离开井底。',
         effects: { spiritStones: 14, mentalState: 2, fortune: -1, karma: -1 },
+      },
+    ],
+  },
+  'nameless-moon-tide': {
+    id: 'nameless-moon-tide',
+    locationId: 'nameless-well',
+    title: '赤月让井水有了影子',
+    eyebrow: 'CELESTIAL OMEN · 赤月照井',
+    summary: '井底本来没有水，赤月升起后，石面却映出一层薄薄的红光。那光里有一个不属于你的影子，正等着你先开口。',
+    repeatable: true,
+    condition: (state) => getWorldCycle(state).omenId === 'red-moon',
+    choices: [
+      {
+        id: 'answer-the-shadow',
+        label: '向影子报上名字',
+        summary: '影子没有回答，却把一枚灵石推到你脚边。你意识到井底记住的也许不是名字，而是回应。',
+        effects: { spiritStones: 9, karma: 1, mentalState: -2 },
+      },
+      {
+        id: 'watch-the-shadow',
+        label: '只看不答',
+        summary: '你守住沉默，影子最终自行散去，石壁上留下了一行短暂可见的呼吸口诀。',
+        effects: { spiritSense: 2, techniqueFragments: 1, fortune: 1 },
+      },
+    ],
+  },
+  'nameless-starfall': {
+    id: 'nameless-starfall',
+    locationId: 'nameless-well',
+    title: '井底接住一颗星',
+    eyebrow: 'CELESTIAL OMEN · 流星入井',
+    summary: '流星雨经过时，一点天光穿过井口，没有坠入石底，反而停在半空。它照亮了三条只存在于这一刻的旧路。',
+    repeatable: true,
+    condition: (state) => getWorldCycle(state).omenId === 'falling-stars',
+    choices: [
+      {
+        id: 'touch-the-fallen-star',
+        label: '伸手触星',
+        summary: '星光在你掌心化成一段陌生记忆，记忆没有主人，却留下了可以反复推演的灵息。',
+        effects: { cultivation: 10, spiritSense: 1, mentalState: -4 },
+      },
+      {
+        id: 'let-star-return',
+        label: '让它回到天上',
+        summary: '你没有把天外之物据为己有。星光离开前，井壁上短暂显出一枚指向出口的符号。',
+        effects: { fortune: 3, karma: 2, spiritStones: 6 },
+      },
+    ],
+  },
+  'nameless-true-name': {
+    id: 'nameless-true-name',
+    locationId: 'nameless-well',
+    title: '回声把真名还给你',
+    eyebrow: 'CONDITION TRACE · 因果回潮',
+    summary: '你的因果线积到足够深时，井底终于没有模仿你的声音。它用一种更古老的语气，叫出了一个你从未告诉过任何人的名字。',
+    condition: (state) => state.character.attributes.karma >= 3 && state.social.relationships['nameless-soul'].affinity >= 20,
+    choices: [
+      {
+        id: 'accept-the-true-name',
+        label: '承认这个名字',
+        summary: '你没有追问名字从何而来，只把它收进心底。井底的回声因此少了一层敌意。',
+        effects: { techniqueFragments: 3, spiritSense: 2, mentalState: 3, karma: -2 },
+      },
+      {
+        id: 'refuse-the-true-name',
+        label: '拒绝替它命名',
+        summary: '你认为名字应当由自己走出来，而不是从井底领取。回声沉默片刻，留下了一点不属于任何人的气运。',
+        effects: { fortune: 3, cultivation: 8, karma: 1 },
       },
     ],
   },

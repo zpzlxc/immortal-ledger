@@ -4,6 +4,7 @@ import {
   BREAKTHROUGH_FAILURE_COOLDOWN_MINUTES,
   MAX_OFFLINE_MINUTES,
   REAL_MINUTE_TO_GAME_DAYS,
+  SECT_DEFECTION_COOLDOWN_MINUTES,
 } from './content';
 import {
   CAVE_BUILDINGS,
@@ -28,6 +29,8 @@ import {
 import {
   createSocialState,
   getPersonEvent,
+  getNextSectPosition,
+  getSectPosition,
   getRelationshipStatus,
   getSectEffects,
   getSectExchange,
@@ -35,6 +38,7 @@ import {
   PERSON_EVENTS,
   RELATIONSHIPS,
   SECTS,
+  SECT_POSITIONS,
 } from './people';
 import { createLedgerEntry } from './save';
 import {
@@ -189,9 +193,12 @@ const getNextExplorationEvent = (
   }
 
   const availableEvents = getExplorationEventsForLocation(action.locationId).filter(
-    (event) => !hasCompletedExplorationEvent(state, event.id),
+    (event) => (event.repeatable || !hasCompletedExplorationEvent(state, event.id))
+      && (!event.condition || event.condition(state)),
   );
   if (availableEvents.length === 0) return null;
+  const freshEvents = availableEvents.filter((event) => event.id !== state.lastExplorationEventId);
+  const eventPool = freshEvents.length > 0 ? freshEvents : availableEvents;
 
   const eventChance = state.completedExplorationEventIds.length === 0
     ? 1
@@ -199,7 +206,7 @@ const getNextExplorationEvent = (
       ? 0.75
       : 0.45;
   if (random() > eventChance) return null;
-  return pick(availableEvents, random);
+  return pick(eventPool, random);
 };
 
 const randomInt = (min: number, max: number, random: RandomSource = Math.random) =>
@@ -494,7 +501,8 @@ const actionResult = (
   const { character, inventory } = state;
   const caveEffects = getCaveEffects(state.cave);
   const techniqueEffects = getTechniqueEffects(state.cultivationPath);
-  const sectEffects = getSectEffects(state.social.sect.sectId);
+  const sectEffects = getSectEffects(state.social.sect.sectId, state.social.sect.positionId);
+  const sectPosition = getSectPosition(state.social.sect.positionId);
   const choose = <T,>(items: readonly T[]) => pick(items, random);
   const entries: LedgerEntry[] = [];
   let cultivationGain = 0;
@@ -708,7 +716,8 @@ const actionResult = (
       inventory.techniqueFragments += rewards.techniqueFragments ?? 0;
       character.realm.cultivation += rewards.cultivation ?? 0;
       state.social.sect.reputation += rewards.reputation;
-      state.social.sect.contribution += rewards.contribution;
+      const contributionGain = rewards.contribution + (sectPosition?.missionContributionBonus ?? 0);
+      state.social.sect.contribution += contributionGain;
       const risky = mission.id.endsWith('escort') || mission.id.endsWith('cure') || mission.id.endsWith('seal');
       const suffered = risky && random() < 0.22;
       if (suffered) {
@@ -719,7 +728,7 @@ const actionResult = (
       body = `${mission.summary}你把任务交回宗门，门中执事没有夸你，只在名册上多添了一笔。${suffered ? '回程时的一点意外让你心神不宁，也留下了需要调养的伤势。' : '这回没有留下多余的伤口。'}`;
       changes.push(
         `宗门声望 +${rewards.reputation}`,
-        `宗门贡献 +${rewards.contribution}`,
+        `宗门贡献 +${contributionGain}`,
         rewards.spiritStones ? `灵石 +${rewards.spiritStones}` : '',
         rewards.herbs ? `灵草 +${rewards.herbs}` : '',
         rewards.techniqueFragments ? `功法残页 +${rewards.techniqueFragments}` : '',
@@ -815,6 +824,7 @@ export const settleGame = (
   state.social = state.social ?? createSocialState();
   state.pendingExplorationEvent = state.pendingExplorationEvent ?? null;
   state.completedExplorationEventIds = state.completedExplorationEventIds ?? [];
+  state.lastExplorationEventId = state.lastExplorationEventId ?? null;
   const newEntries: LedgerEntry[] = [];
   const elapsedMs = now - state.lastSettledAt;
 
@@ -1229,7 +1239,8 @@ export const resolveExplorationEvent = (
   state.character.attributes.fortune += effects.fortune ?? 0;
   state.character.attributes.karma += effects.karma ?? 0;
   state.completedExplorationEventIds = state.completedExplorationEventIds ?? [];
-  if (!state.completedExplorationEventIds.includes(event.id)) {
+  state.lastExplorationEventId = event.id;
+  if (!event.repeatable && !state.completedExplorationEventIds.includes(event.id)) {
     state.completedExplorationEventIds = [...state.completedExplorationEventIds, event.id];
   }
   state.pendingExplorationEvent = null;
@@ -1361,18 +1372,115 @@ export const joinSect = (
   if (state.social.sect.sectId) {
     return { state, newEntries: [], error: `你已经是${SECTS[state.social.sect.sectId].name}弟子，不能再拜入别宗。` };
   }
+  if (state.social.sect.cooldownUntil && state.social.sect.cooldownUntil > now) {
+    const remainingMinutes = Math.ceil((state.social.sect.cooldownUntil - now) / MINUTE_MS);
+    return { state, newEntries: [], error: `叛门余波未散，还需静候 ${remainingMinutes} 分钟才能重新拜入宗门。` };
+  }
   if (!state.social.sect.invited) {
     return { state, newEntries: [], error: '还没有人替你写下引荐。先完成玄松道人的人物事件。' };
   }
 
   state.social.sect.sectId = sectId;
   state.social.sect.joinedAt = now;
+  state.social.sect.positionId = 'outer-disciple';
   state.social.sect.contribution = 0;
+  state.social.sect.reputation = 0;
+  state.social.sect.cooldownUntil = null;
   const entry = createLedgerEntry(
     'relationship',
     `拜入${sect.name}`,
     `${sect.motto}你在玄松道人的引荐下入了${sect.name}。宗门不会替你修行，但会让你少走一些不必要的弯路。`,
     ['宗门', sect.name, '初入门墙'],
+    now,
+  );
+  state.ledger = [entry, ...state.ledger].slice(0, 100);
+  return { state, newEntries: [entry] };
+};
+
+export const promoteSectPosition = (
+  input: GameState,
+  now = Date.now(),
+): SocialMutationResult => {
+  const state = structuredClone(input);
+  state.social = state.social ?? createSocialState();
+  if (!state.social.sect.sectId) {
+    return { state, newEntries: [], error: '尚未加入宗门，不能接受职位考核。' };
+  }
+  if (state.character.currentAction) {
+    return { state, newEntries: [], error: '当前还有行动进行中，等这段修行结束后再接受职位考核。' };
+  }
+  if (state.pendingExplorationEvent || state.social.pendingPersonEvent) {
+    return { state, newEntries: [], error: '请先处理眼前的事件，再接受职位考核。' };
+  }
+
+  const currentPosition = getSectPosition(state.social.sect.positionId) ?? SECT_POSITIONS['outer-disciple'];
+  const nextPosition = getNextSectPosition(currentPosition.id);
+  if (!nextPosition) {
+    return { state, newEntries: [], error: '你已经站在当前宗门的职位顶端。' };
+  }
+  if (state.social.sect.reputation < nextPosition.requiredReputation) {
+    return { state, newEntries: [], error: `晋升${nextPosition.label}需要 ${nextPosition.requiredReputation} 点宗门声望。` };
+  }
+  if (state.social.sect.contribution < nextPosition.requiredContribution) {
+    return { state, newEntries: [], error: `晋升${nextPosition.label}需要 ${nextPosition.requiredContribution} 点宗门贡献。` };
+  }
+
+  const sect = SECTS[state.social.sect.sectId];
+  state.social.sect.positionId = nextPosition.id;
+  state.social.sect.contribution -= nextPosition.contributionCost;
+  const entry = createLedgerEntry(
+    'relationship',
+    `${nextPosition.label}晋升`,
+    `${sect.name}的执事验过你的名册和功课，认为你已经不必只站在山门外听令。${nextPosition.summary}`,
+    ['职位晋升', nextPosition.label, `贡献 -${nextPosition.contributionCost}`],
+    now,
+  );
+  state.ledger = [entry, ...state.ledger].slice(0, 100);
+  return { state, newEntries: [entry] };
+};
+
+export const defectSect = (
+  input: GameState,
+  now = Date.now(),
+): SocialMutationResult => {
+  const state = structuredClone(input);
+  state.social = state.social ?? createSocialState();
+  const sectId = state.social.sect.sectId;
+  if (!sectId) {
+    return { state, newEntries: [], error: '你现在是散修，不需要叛门。' };
+  }
+  if (state.character.currentAction) {
+    return { state, newEntries: [], error: '当前还有宗门行动进行中，不能在任务途中叛门。' };
+  }
+  if (state.pendingExplorationEvent || state.social.pendingPersonEvent) {
+    return { state, newEntries: [], error: '请先处理眼前的事件，再决定是否叛门。' };
+  }
+
+  const sect = SECTS[sectId];
+  const lostReputation = state.social.sect.reputation;
+  const lostContribution = state.social.sect.contribution;
+  state.social.sect.sectId = null;
+  state.social.sect.joinedAt = null;
+  state.social.sect.positionId = null;
+  state.social.sect.reputation = 0;
+  state.social.sect.contribution = 0;
+  state.social.sect.invited = true;
+  state.social.sect.defectionCount += 1;
+  state.social.sect.cooldownUntil = now + SECT_DEFECTION_COOLDOWN_MINUTES * MINUTE_MS;
+  state.character.attributes.karma -= 2;
+  state.character.attributes.fortune = Math.max(0, state.character.attributes.fortune - 1);
+  const entry = createLedgerEntry(
+    'relationship',
+    `离开${sect.name}`,
+    `你把门中令牌放回案上，撕掉自己的名字。旧宗门不会追杀一个还未成气候的弟子，却也不会替你遮掩这一次选择。${SECT_DEFECTION_COOLDOWN_MINUTES}分钟内，新的山门不会接纳你。`,
+    [
+      '叛门',
+      `声望清零（原 ${lostReputation}）`,
+      `贡献清零（原 ${lostContribution}）`,
+      '因果 -2',
+      '气运 -1',
+      `重新入门冷却 ${SECT_DEFECTION_COOLDOWN_MINUTES} 分钟`,
+    ],
     now,
   );
   state.ledger = [entry, ...state.ledger].slice(0, 100);

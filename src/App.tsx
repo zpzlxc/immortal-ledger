@@ -15,21 +15,25 @@ import {
   getCaveEffects,
   getUpgradeCost,
 } from './game/cave';
-import { EXPLORATION_LOCATIONS, getExplorationEvent } from './game/exploration';
+import { EXPLORATION_EVENTS, EXPLORATION_LOCATIONS, getExplorationEvent, getWorldCycle } from './game/exploration';
 import { getInjuryLabel, getInjurySourceLabel } from './game/injury';
 import { getOfflineSummary, type OfflineSummary } from './game/offline';
 import {
   getPersonEvent,
+  getNextSectPosition,
   getSectEffects,
   getSectMission,
   getSectMissions,
   getSectRank,
+  getSectPosition,
+  PERSON_EVENTS,
   RELATIONSHIPS,
   SECT_EXCHANGES,
   SECTS,
 } from './game/people';
 import {
   CULTIVATION_SCHOOLS,
+  TECHNIQUE_DEFINITIONS,
   getActiveTechnique,
   getTechniqueProgress,
 } from './game/techniques';
@@ -60,9 +64,11 @@ import {
 import {
   collectCave,
   chooseCultivationSchool,
+  defectSect,
   exchangeSectReputation,
   getBreakthroughStartError,
   joinSect,
+  promoteSectPosition,
   researchTechniqueBranch,
   resolveExplorationEvent,
   resolvePersonEvent,
@@ -283,6 +289,34 @@ const App = () => {
     setGame(result.state);
     setErrorMessage(result.error ?? '');
     if (result.newEntries.length > 0) setNotice(result.newEntries);
+  };
+
+  const handlePromoteSectPosition = () => {
+    if (!game) return;
+    const settledAt = Date.now();
+    const settled = settleGame(game, settledAt);
+    captureOfflineSummary(game, settled.state, settledAt);
+    const result = promoteSectPosition(settled.state, settledAt);
+    saveGame(result.state);
+    setGame(result.state);
+    setErrorMessage(result.error ?? '');
+    if (settled.newEntries.length > 0 || result.newEntries.length > 0) {
+      setNotice([...settled.newEntries, ...result.newEntries]);
+    }
+  };
+
+  const handleDefectSect = () => {
+    if (!game) return;
+    const settledAt = Date.now();
+    const settled = settleGame(game, settledAt);
+    captureOfflineSummary(game, settled.state, settledAt);
+    const result = defectSect(settled.state, settledAt);
+    saveGame(result.state);
+    setGame(result.state);
+    setErrorMessage(result.error ?? '');
+    if (settled.newEntries.length > 0 || result.newEntries.length > 0) {
+      setNotice([...settled.newEntries, ...result.newEntries]);
+    }
   };
 
   const handleStartSectMission = (missionId: SectMissionId) => {
@@ -585,6 +619,7 @@ const App = () => {
               now={now}
               cave={game.cave}
               sectId={game.social.sect.sectId}
+              worldCycle={getWorldCycle(game)}
               discoveredLocations={game.discoveredLocations}
               pendingEvent={game.pendingExplorationEvent ? getExplorationEvent(game.pendingExplorationEvent.eventId) : null}
               selectedLocationId={selectedExplorationLocationId}
@@ -607,11 +642,14 @@ const App = () => {
           {activeTab === 'people' && (
             <PeopleView
               social={game.social}
+              now={now}
               currentAction={game.character.currentAction}
               onResolveEvent={handleResolvePersonEvent}
               onJoinSect={handleJoinSect}
               onStartMission={handleStartSectMission}
               onExchangeReputation={handleExchangeReputation}
+              onPromotePosition={handlePromoteSectPosition}
+              onDefectSect={handleDefectSect}
             />
           )}
           {activeTab === 'codex' && <CodexView game={game} />}
@@ -1115,11 +1153,12 @@ const TechniqueView = ({ currentAction, now, cave, sectId, inventory, cultivatio
   </div>
 );
 
-const ExplorationView = ({ currentAction, now, cave, sectId, discoveredLocations, pendingEvent, selectedLocationId, onLocationChange, onStart, onResolveEvent }: {
+const ExplorationView = ({ currentAction, now, cave, sectId, worldCycle, discoveredLocations, pendingEvent, selectedLocationId, onLocationChange, onStart, onResolveEvent }: {
   currentAction: GameState['character']['currentAction'];
   now: number;
   cave: GameState['cave'];
   sectId: SectId | null;
+  worldCycle: ReturnType<typeof getWorldCycle>;
   discoveredLocations: string[];
   pendingEvent: ReturnType<typeof getExplorationEvent> | null;
   selectedLocationId: ExplorationLocationId;
@@ -1131,6 +1170,14 @@ const ExplorationView = ({ currentAction, now, cave, sectId, discoveredLocations
     <section className="page-heading">
       <div><div className="eyebrow">BEYOND THE GATE · 山门之外</div><h2>探索</h2><p>选择一个已经发现的地方，看看山河里藏着什么。</p></div>
       <div className="heading-resource"><span>已发现</span><strong>{discoveredLocations.length}/{Object.keys(EXPLORATION_LOCATIONS).length}</strong></div>
+    </section>
+    <section className="world-cycle-card paper-card">
+      <div>
+        <div className="eyebrow">THE TURNING SKY · 时令天象</div>
+        <h3>{worldCycle.seasonLabel} · {worldCycle.weatherLabel}</h3>
+        <p>{worldCycle.summary}</p>
+      </div>
+      <div className="world-cycle-omen"><span>当前天象</span><strong>{worldCycle.omenLabel}</strong></div>
     </section>
     {pendingEvent && (
       <section className="exploration-event-card paper-card">
@@ -1303,16 +1350,22 @@ const formatSectEffects = (effects: ReturnType<typeof getSectEffects>) => {
   return labels.join(' · ');
 };
 
-const PeopleView = ({ social, currentAction, onResolveEvent, onJoinSect, onStartMission, onExchangeReputation }: {
+const PeopleView = ({ social, now, currentAction, onResolveEvent, onJoinSect, onStartMission, onExchangeReputation, onPromotePosition, onDefectSect }: {
   social: GameState['social'];
+  now: number;
   currentAction: GameState['character']['currentAction'];
   onResolveEvent: (choiceId: string) => void;
   onJoinSect: (sectId: SectId) => void;
   onStartMission: (missionId: SectMissionId) => void;
   onExchangeReputation: (exchangeId: SectExchangeId) => void;
+  onPromotePosition: () => void;
+  onDefectSect: () => void;
 }) => {
   const pendingEvent = social.pendingPersonEvent ? getPersonEvent(social.pendingPersonEvent.eventId) : null;
   const joinedSect = social.sect.sectId ? SECTS[social.sect.sectId] : null;
+  const currentPosition = getSectPosition(social.sect.positionId);
+  const nextPosition = getNextSectPosition(currentPosition?.id ?? 'outer-disciple');
+  const sectCooldown = Math.max(0, (social.sect.cooldownUntil ?? 0) - now);
 
   return (
     <div className="view-stack">
@@ -1365,7 +1418,17 @@ const PeopleView = ({ social, currentAction, onResolveEvent, onJoinSect, onStart
           <>
             <div className="joined-sect">
               <div className="joined-sect-icon">{joinedSect.icon}</div>
-              <div><strong>你已是{joinedSect.name}弟子 · {getSectRank(social.sect.reputation)}</strong><p>{joinedSect.summary}</p><small className="sect-effects">声望 {social.sect.reputation} · {formatSectEffects(getSectEffects(joinedSect.id))}</small></div>
+              <div><strong>你已是{joinedSect.name}弟子 · {currentPosition?.label ?? getSectRank(social.sect.reputation)}</strong><p>{joinedSect.summary}</p><small className="sect-effects">声望 {social.sect.reputation} · {formatSectEffects(getSectEffects(joinedSect.id, currentPosition?.id ?? null))}</small></div>
+            </div>
+            <div className="sect-position-panel">
+              <div className="sect-mission-heading"><div><div className="eyebrow">POSITION LADDER · 门中职位</div><h4>{nextPosition ? `晋升：${nextPosition.label}` : '职位已至顶端'}</h4></div><span>{currentPosition?.label ?? '外门弟子'}</span></div>
+              {nextPosition ? (
+                <>
+                  <p>{nextPosition.summary}</p>
+                  <small>需要声望 {nextPosition.requiredReputation} · 贡献 {nextPosition.requiredContribution} · 晋升消耗贡献 {nextPosition.contributionCost}</small>
+                  <button className="secondary-button" disabled={Boolean(currentAction)} onClick={onPromotePosition}>{currentAction ? '行动中' : '接受职位考核'}</button>
+                </>
+              ) : <p>你已经替宗门承担最重的名册与外务，职位加成正在生效。</p>}
             </div>
             <div className="sect-mission-list">
               <div className="sect-mission-heading"><div><div className="eyebrow">THE SECT HAS WORK · 宗门任务</div><h4>今日差事</h4></div><span>{currentAction ? '行动中' : '可安排一项'}</span></div>
@@ -1402,17 +1465,21 @@ const PeopleView = ({ social, currentAction, onResolveEvent, onJoinSect, onStart
                 })}
               </div>
             </div>
+            <div className="sect-defection-panel">
+              <div><strong>叛门</strong><p>离开当前宗门会清空声望、贡献和职位，并损失因果与气运。叛门后需要等待两小时才能重新选择门墙。</p></div>
+              <button className="danger-button" disabled={Boolean(currentAction)} onClick={onDefectSect}>{currentAction ? '行动中' : '叛门并转为散修'}</button>
+            </div>
           </>
         ) : social.sect.invited ? (
           <>
-            <p className="sect-intro">玄松道人替你写下了引荐。宗门会改变你的日常回报，但这一世只能选择一处门墙。</p>
+            <p className="sect-intro">玄松道人替你写下了引荐。宗门会改变你的日常回报，但这一世只能选择一处门墙。{sectCooldown > 0 ? `叛门余波未散，还需 ${formatRemaining((social.sect.cooldownUntil ?? now) as number, now)} 才能重新拜入。` : ''}</p>
             <div className="sect-grid">
               {Object.values(SECTS).map((sect) => (
                 <article className="sect-card" key={sect.id}>
                   <div className="sect-card-top"><span className="sect-icon">{sect.icon}</span><div><strong>{sect.name}</strong><small>{sect.motto}</small></div></div>
                   <p>{sect.summary}</p>
                   <small className="sect-effects">{formatSectEffects(getSectEffects(sect.id))}</small>
-                  <button className="secondary-button" onClick={() => onJoinSect(sect.id)}>拜入此门</button>
+                  <button className="secondary-button" disabled={sectCooldown > 0} onClick={() => onJoinSect(sect.id)}>{sectCooldown > 0 ? '叛门冷却中' : '拜入此门'}</button>
                 </article>
               ))}
             </div>
@@ -1501,22 +1568,109 @@ const CaveView = ({ cave, inventory, sectId, injury, onCollect, onTreat, onUpgra
   );
 };
 
-const CodexView = ({ game }: { game: GameState }) => (
-  <div className="view-stack">
-    <section className="page-heading"><div><div className="eyebrow">WHAT YOU HAVE SEEN · 记录与发现</div><h2>图鉴</h2><p>你走过的地方、读过的残卷，都会在此留下索引。</p></div><div className="heading-stamp">初录</div></section>
-    <div className="codex-grid">
-      {Object.values(EXPLORATION_LOCATIONS).map((location, index) => {
-        const discovered = game.discoveredLocations.includes(location.id);
-        return <div className={`codex-card ${discovered ? '' : 'locked'}`} key={location.id}>
-          <div className="codex-art" style={discovered ? { backgroundImage: `url(${location.image})` } : undefined} aria-hidden="true"><span>{discovered ? location.icon : '？'}</span></div>
-          <span className="codex-number">{String(index + 1).padStart(2, '0')}</span>
-          <div><strong>{location.label}</strong><p>{discovered ? location.atmosphere : location.unlockHint}</p></div>
-          <span className="discovered-mark">{discovered ? '已发现' : '未解锁'}</span>
-        </div>;
-      })}
-      <div className="codex-card"><span className="codex-number">天赋</span><div><strong>已选天赋</strong><p>{game.character.talents.map((talent) => talent.name).join('、')}</p></div><span className="discovered-mark">本世</span></div>
+const CodexView = ({ game }: { game: GameState }) => {
+  const inheritedLocations = new Set(game.legacy.discoveredLocations);
+  const seenExplorationEvents = new Set(game.completedExplorationEventIds);
+  for (const event of Object.values(EXPLORATION_EVENTS)) {
+    if (game.ledger.some((entry) => entry.category === 'exploration' && entry.title.includes(event.title))) {
+      seenExplorationEvents.add(event.id);
+    }
+  }
+  const completedPersonEvents = new Set(game.social.completedPersonEventIds);
+  const pendingPersonEventId = game.social.pendingPersonEvent?.eventId;
+  const pendingExplorationEventId = game.pendingExplorationEvent?.eventId;
+  const techniqueBranches = Object.values(TECHNIQUE_DEFINITIONS).flatMap((technique) => technique.branches);
+  const unlockedTechniqueBranches = Object.values(game.cultivationPath.techniques)
+    .reduce((total, progress) => total + progress.unlockedBranchIds.length, 0);
+  const discoveredLocationCount = Object.values(EXPLORATION_LOCATIONS)
+    .filter((location) => game.discoveredLocations.includes(location.id) || inheritedLocations.has(location.id)).length;
+  const codexTotal = Object.keys(EXPLORATION_LOCATIONS).length
+    + Object.keys(PERSON_EVENTS).length
+    + Object.keys(EXPLORATION_EVENTS).length
+    + techniqueBranches.length;
+  const codexUnlocked = discoveredLocationCount
+    + completedPersonEvents.size
+    + seenExplorationEvents.size
+    + unlockedTechniqueBranches;
+
+  return (
+    <div className="view-stack">
+      <section className="page-heading"><div><div className="eyebrow">WHAT YOU HAVE SEEN · 记录与发现</div><h2>图鉴</h2><p>你走过的地方、读过的残卷和留下的选择，都会在此留下索引。</p></div><div className="heading-stamp">{codexUnlocked}/{codexTotal}</div></section>
+
+      <section className="codex-overview paper-card">
+        <div><div className="eyebrow">THE LONG MEMORY · 长生簿的记忆</div><h3>这一世已经留下 {codexUnlocked} 条记录</h3><p>未解锁的内容不会提前揭开名字；前世发现过的地点和遗泽，会在新的生命里继续发出微光。</p></div>
+        <div className="codex-overview-stat"><span>收录进度</span><strong>{codexTotal === 0 ? 0 : Math.round((codexUnlocked / codexTotal) * 100)}%</strong></div>
+      </section>
+
+      <section className="codex-section paper-card">
+        <div className="codex-section-heading"><div><div className="eyebrow">LANDS YOU HAVE WALKED · 山河索引</div><h3>探索地点</h3></div><span>{discoveredLocationCount} / {Object.keys(EXPLORATION_LOCATIONS).length} 已收录</span></div>
+        <div className="codex-grid">
+          {Object.values(EXPLORATION_LOCATIONS).map((location, index) => {
+            const discoveredThisLife = game.discoveredLocations.includes(location.id);
+            const inherited = inheritedLocations.has(location.id);
+            const discovered = discoveredThisLife || inherited;
+            return <div className={`codex-card ${discovered ? '' : 'locked'}`} key={location.id}>
+              <div className="codex-art" style={discovered ? { backgroundImage: `url(${location.image})` } : undefined} aria-hidden="true"><span>{discovered ? location.icon : '？'}</span></div>
+              <span className="codex-number">{String(index + 1).padStart(2, '0')}</span>
+              <div><strong>{location.label}</strong><p>{discovered ? location.atmosphere : location.unlockHint}</p></div>
+              <span className="discovered-mark">{discoveredThisLife ? '本世已发现' : inherited ? '轮回遗泽' : '未解锁'}</span>
+            </div>;
+          })}
+          <div className="codex-card"><span className="codex-number">天赋</span><div><strong>已选天赋</strong><p>{game.character.talents.map((talent) => talent.name).join('、')}</p></div><span className="discovered-mark">本世</span></div>
+        </div>
+      </section>
+
+      <section className="codex-section paper-card">
+        <div className="codex-section-heading"><div><div className="eyebrow">THREADS THAT REMAIN · 人物事件</div><h3>人物与宗门故事</h3></div><span>{completedPersonEvents.size} / {Object.keys(PERSON_EVENTS).length} 已记录</span></div>
+        <div className="codex-record-grid">
+          {Object.values(PERSON_EVENTS).map((event) => {
+            const completed = completedPersonEvents.has(event.id);
+            const pending = pendingPersonEventId === event.id;
+            const person = RELATIONSHIPS[event.relationshipId];
+            return <article className={`codex-record ${completed || pending ? '' : 'locked'}`} key={event.id}>
+              <div className="codex-record-mark">{completed ? '✓' : pending ? '!' : '?'}</div>
+              <div className="codex-record-body"><small>{completed || pending ? event.eyebrow : '未解锁的缘分'}</small><strong>{completed || pending ? event.title : '未解锁的人物事件'}</strong><p>{completed ? event.summary : pending ? '这段故事正在等待你的回应。' : `与${person.name}有关的后续，还没有在本世留下完整记录。`}</p><span>{pending ? '待处理' : completed ? `已记录 · ${event.choices.length} 个选择` : '未解锁'}</span></div>
+            </article>;
+          })}
+        </div>
+      </section>
+
+      <section className="codex-section paper-card">
+        <div className="codex-section-heading"><div><div className="eyebrow">TRACES LEFT IN THE WILD · 探索分支</div><h3>山野事件</h3></div><span>{seenExplorationEvents.size} / {Object.keys(EXPLORATION_EVENTS).length} 已遇见</span></div>
+        <div className="codex-record-grid">
+          {Object.values(EXPLORATION_EVENTS).map((event) => {
+            const seen = seenExplorationEvents.has(event.id);
+            const pending = pendingExplorationEventId === event.id;
+            const recorded = seen && !pending;
+            return <article className={`codex-record ${recorded || pending ? '' : 'locked'}`} key={event.id}>
+              <div className="codex-record-mark">{recorded ? '✓' : pending ? '!' : '?'}</div>
+              <div className="codex-record-body"><small>{recorded || pending ? event.eyebrow : `${EXPLORATION_LOCATIONS[event.locationId].label} · 未解锁线索`}</small><strong>{recorded || pending ? event.title : '尚未遇见的山野事件'}</strong><p>{recorded ? event.summary : pending ? '事件正在等待你的选择。' : `在${EXPLORATION_LOCATIONS[event.locationId].label}继续行走，或许能遇见新的岔路。`}</p><span>{pending ? '待处理' : recorded ? `${event.repeatable ? '可重复事件' : '一次性事件'} · 已记录` : '未遇见'}</span></div>
+            </article>;
+          })}
+        </div>
+      </section>
+
+      <section className="codex-section paper-card">
+        <div className="codex-section-heading"><div><div className="eyebrow">BRANCHES OF PRACTICE · 功法图谱</div><h3>功法分支</h3></div><span>{unlockedTechniqueBranches} / {techniqueBranches.length} 已掌握</span></div>
+        <div className="codex-technique-grid">
+          {Object.values(TECHNIQUE_DEFINITIONS).map((technique) => {
+            const progress = game.cultivationPath.techniques[technique.id];
+            const unlockedBranches = progress?.unlockedBranchIds ?? [];
+            return <article className="codex-technique-card" key={technique.id}>
+              <div className="codex-technique-top"><div><small>{CULTIVATION_SCHOOLS[technique.schoolId].label} · {technique.grade}</small><strong>{technique.name}</strong></div><span>{unlockedBranches.length}/{technique.branches.length}</span></div>
+              <p>{technique.summary}</p>
+              <div className="codex-branch-list">{technique.branches.map((branch) => <span className={unlockedBranches.includes(branch.id) ? 'unlocked' : ''} key={branch.id}>{unlockedBranches.includes(branch.id) ? '✓' : '·'} {unlockedBranches.includes(branch.id) ? branch.label : '未解锁分支'}</span>)}</div>
+            </article>;
+          })}
+        </div>
+      </section>
+
+      <section className="codex-summary-grid">
+        <article className="codex-summary-card paper-card"><div className="eyebrow">THE ENDING OF THIS LIFE · 本世结局</div><h3>{game.lifeSummary ? game.lifeSummary.characterName : game.character.name}</h3><p>{game.lifeSummary ? `第${game.lifeSummary.lifeNumber}世 · ${formatRealm(game.lifeSummary.realm.major, game.lifeSummary.realm.stage)} · 走过 ${game.lifeSummary.discoveredLocationCount} 处地点。` : '这一世还没有写到最后一页。寿元、选择和关系，仍在继续改变结局。'}</p>{game.lifeSummary ? <small>{game.lifeSummary.keyEvents.slice(0, 4).join(' · ') || '没有留下额外关键事件'}</small> : <span className="discovered-mark">进行中</span>}</article>
+        <article className="codex-summary-card paper-card"><div className="eyebrow">RELICS BETWEEN LIVES · 轮回遗泽</div><h3>前世留下的微光</h3><p>历世 {game.legacy.lifeCount} 世 · 已继承地点 {game.legacy.discoveredLocations.length} 处 · 遗留功法残页 {game.legacy.techniqueFragments} 页。</p><small>{game.legacy.previousLifeNames.length > 0 ? `曾用名：${game.legacy.previousLifeNames.slice(-3).join('、')}` : '还没有前世姓名记录'}</small></article>
+      </section>
     </div>
-  </div>
-);
+  );
+};
 
 export default App;

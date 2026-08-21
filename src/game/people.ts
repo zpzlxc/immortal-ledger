@@ -2,6 +2,7 @@ import type {
   PersonEventId,
   RelationshipId,
   SectId,
+  SectPositionId,
   SectMissionId,
   SectExchangeId,
   SocialState,
@@ -63,6 +64,59 @@ export type SectEffects = {
   studyFragmentBonus: number;
   studyProficiencyBonus: number;
   studyDurationReduction: number;
+};
+
+export type SectPositionDefinition = {
+  id: SectPositionId;
+  label: string;
+  summary: string;
+  requiredReputation: number;
+  requiredContribution: number;
+  contributionCost: number;
+  missionContributionBonus: number;
+  effects: Partial<SectEffects>;
+};
+
+export const SECT_POSITIONS: Record<SectPositionId, SectPositionDefinition> = {
+  'outer-disciple': {
+    id: 'outer-disciple',
+    label: '外门弟子',
+    summary: '先把门中差事做稳，宗门才会把更深一层的名册交给你。',
+    requiredReputation: 0,
+    requiredContribution: 0,
+    contributionCost: 0,
+    missionContributionBonus: 0,
+    effects: {},
+  },
+  'inner-disciple': {
+    id: 'inner-disciple',
+    label: '内门弟子',
+    summary: '可以接触更完整的门内传承，日常修炼和研读也会得到正式弟子的照应。',
+    requiredReputation: 60,
+    requiredContribution: 12,
+    contributionCost: 6,
+    missionContributionBonus: 1,
+    effects: { cultivationMultiplier: 0.03, studyProficiencyBonus: 1 },
+  },
+  'sect-steward': {
+    id: 'sect-steward',
+    label: '门中执事',
+    summary: '你开始替宗门分担名册和外务，门中资源会更愿意沿着你的名字流动。',
+    requiredReputation: 120,
+    requiredContribution: 30,
+    contributionCost: 15,
+    missionContributionBonus: 2,
+    effects: { explorationStoneBonus: 2 },
+  },
+};
+
+export const getSectPosition = (positionId: SectPositionId | null) =>
+  positionId ? SECT_POSITIONS[positionId] : null;
+
+export const getNextSectPosition = (positionId: SectPositionId | null) => {
+  if (positionId === 'outer-disciple' || !positionId) return SECT_POSITIONS['inner-disciple'];
+  if (positionId === 'inner-disciple') return SECT_POSITIONS['sect-steward'];
+  return null;
 };
 
 export const SECTS: Record<SectId, SectDefinition> = {
@@ -490,8 +544,11 @@ export const createSocialState = (): SocialState => ({
     sectId: null,
     invited: false,
     joinedAt: null,
+    positionId: null,
     contribution: 0,
     reputation: 0,
+    defectionCount: 0,
+    cooldownUntil: null,
   },
   pendingPersonEvent: null,
   completedPersonEventIds: [],
@@ -504,9 +561,19 @@ export const getRelationshipStatus = (affinity: number) => {
   return '陌生' as const;
 };
 
-export const getSectEffects = (sectId: SectId | null): SectEffects => {
-  if (!sectId) return { ...EMPTY_SECT_EFFECTS };
-  return { ...SECTS[sectId].effects };
+export const getSectEffects = (
+  sectId: SectId | null,
+  positionId: SectPositionId | null = null,
+): SectEffects => {
+  const base = sectId ? SECTS[sectId].effects : EMPTY_SECT_EFFECTS;
+  const position = getSectPosition(positionId);
+  return {
+    cultivationMultiplier: base.cultivationMultiplier + (position?.effects.cultivationMultiplier ?? 0),
+    explorationStoneBonus: base.explorationStoneBonus + (position?.effects.explorationStoneBonus ?? 0),
+    studyFragmentBonus: base.studyFragmentBonus + (position?.effects.studyFragmentBonus ?? 0),
+    studyProficiencyBonus: base.studyProficiencyBonus + (position?.effects.studyProficiencyBonus ?? 0),
+    studyDurationReduction: base.studyDurationReduction + (position?.effects.studyDurationReduction ?? 0),
+  };
 };
 
 export const getPersonEvent = (eventId: PersonEventId) => PERSON_EVENTS[eventId];

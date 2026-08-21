@@ -20,6 +20,7 @@ import type {
   LifeSummary,
   PersonEventId,
   Realm,
+  SectPositionId,
 } from './types';
 
 const createId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -130,7 +131,7 @@ export const createNewGame = (
     );
 
   return {
-    schemaVersion: 9,
+    schemaVersion: 11,
     lifeStatus: 'alive',
     lifeSummary: null,
     pastLives: pastLives
@@ -174,6 +175,7 @@ export const createNewGame = (
     social: createSocialState(),
     pendingExplorationEvent: null,
     completedExplorationEventIds: [],
+    lastExplorationEventId: null,
     discoveredLocations,
     ledger: [openingEntry],
   };
@@ -208,7 +210,7 @@ export const normalizeGameState = (input: GameState): GameState => {
   const initialCave = createCave(now, shouldUnlockCave);
   const cave = legacyCave ?? initialCave;
 
-  state.schemaVersion = Math.max(9, Number(state.schemaVersion) || 1);
+  state.schemaVersion = Math.max(11, Number(state.schemaVersion) || 1);
   state.cave = {
     ...initialCave,
     ...cave,
@@ -303,8 +305,18 @@ export const normalizeGameState = (input: GameState): GameState => {
     : null;
   state.social.sect.invited = Boolean(state.social.sect.invited);
   state.social.sect.joinedAt = state.social.sect.joinedAt ? Number(state.social.sect.joinedAt) : null;
+  const positionIds: SectPositionId[] = ['outer-disciple', 'inner-disciple', 'sect-steward'];
+  const positionId = positionIds.includes(state.social.sect.positionId as SectPositionId)
+    ? state.social.sect.positionId as SectPositionId
+    : null;
+  state.social.sect.positionId = state.social.sect.sectId ? (positionId ?? 'outer-disciple') : null;
   state.social.sect.contribution = Math.max(0, Number(state.social.sect.contribution) || 0);
   state.social.sect.reputation = Math.max(0, Number(state.social.sect.reputation) || 0);
+  state.social.sect.defectionCount = Math.max(0, Number(state.social.sect.defectionCount) || 0);
+  const sectCooldownUntil = Number(state.social.sect.cooldownUntil);
+  state.social.sect.cooldownUntil = Number.isFinite(sectCooldownUntil) && sectCooldownUntil > 0
+    ? sectCooldownUntil
+    : null;
   state.social.completedPersonEventIds = state.social.completedPersonEventIds.filter(
     (eventId): eventId is PersonEventId => eventId in PERSON_EVENTS,
   );
@@ -333,6 +345,9 @@ export const normalizeGameState = (input: GameState): GameState => {
       (eventId): eventId is ExplorationEventId => eventId in EXPLORATION_EVENTS,
     )
     : [];
+  state.lastExplorationEventId = input.lastExplorationEventId && input.lastExplorationEventId in EXPLORATION_EVENTS
+    ? input.lastExplorationEventId
+    : null;
 
   const discovered = new Set<ExplorationLocationId>(
     (state.discoveredLocations ?? []).filter(

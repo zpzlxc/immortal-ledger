@@ -5,10 +5,19 @@ export type ExplorationLocationId = 'qingstone-mountain' | 'blackwind-valley' | 
 export type ExplorationEventId =
   | 'qingstone-red-bell'
   | 'qingstone-fox-path'
+  | 'qingstone-spring-rain'
+  | 'qingstone-star-moth'
+  | 'qingstone-root-script'
   | 'blackwind-broken-stele'
   | 'blackwind-ghost-lantern'
+  | 'blackwind-wind-tide'
+  | 'blackwind-sand-map'
+  | 'blackwind-sealed-word'
   | 'nameless-reversed-name'
-  | 'nameless-empty-lantern';
+  | 'nameless-empty-lantern'
+  | 'nameless-moon-tide'
+  | 'nameless-starfall'
+  | 'nameless-true-name';
 
 export type PendingExplorationEvent = {
   eventId: ExplorationEventId;
@@ -42,6 +51,7 @@ export type RelationshipState = {
 };
 
 export type SectId = 'qingxiao-sword-sect' | 'baicao-valley' | 'tianji-pavilion';
+export type SectPositionId = 'outer-disciple' | 'inner-disciple' | 'sect-steward';
 export type SectMissionId =
   | 'qingxiao-patrol'
   | 'qingxiao-escort'
@@ -54,8 +64,11 @@ export type SectState = {
   sectId: SectId | null;
   invited: boolean;
   joinedAt: number | null;
+  positionId: SectPositionId | null;
   contribution: number;
   reputation: number;
+  defectionCount: number;
+  cooldownUntil: number | null;
 };
 
 export type PersonEventId =
@@ -218,6 +231,7 @@ export type GameState = {
   social: SocialState;
   pendingExplorationEvent: PendingExplorationEvent | null;
   completedExplorationEventIds: ExplorationEventId[];
+  lastExplorationEventId: ExplorationEventId | null;
   ledger: LedgerEntry[];
   discoveredLocations: string[];
 };
