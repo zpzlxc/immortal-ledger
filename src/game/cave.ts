@@ -78,18 +78,22 @@ export const getUpgradeCost = (buildingId: CaveBuildingId, nextLevel: number) =>
   return UPGRADE_COSTS[buildingId][nextLevel - 1];
 };
 
-export const getCaveEffects = (cave: CaveState) => ({
-  gatheringLevel: cave.buildings['spirit-gathering-array'].level,
-  fieldLevel: cave.buildings['spirit-field'].level,
-  pavilionLevel: cave.buildings['scripture-pavilion'].level,
-  cultivationMultiplier: 1 + cave.buildings['spirit-gathering-array'].level * 0.08,
-  cultivationPerHour: cave.buildings['spirit-gathering-array'].level * 2,
-  herbsPerHour: cave.buildings['spirit-field'].level,
-  studyDurationMinutes: Math.max(
-    10,
-    20 - cave.buildings['scripture-pavilion'].level * 2,
-  ),
-});
+export const getCaveEffects = (cave: CaveState) => {
+  const gatheringLevel = cave.buildings['spirit-gathering-array'].level;
+  const fieldLevel = cave.buildings['spirit-field'].level;
+  const pavilionLevel = cave.buildings['scripture-pavilion'].level;
+  return {
+    gatheringLevel,
+    fieldLevel,
+    pavilionLevel,
+    cultivationMultiplier: 1 + gatheringLevel * 0.08,
+    cultivationPerHour: gatheringLevel * 2,
+    herbsPerHour: fieldLevel,
+    studyDurationMinutes: Math.max(10, 20 - pavilionLevel * 2),
+    medicineYield: gatheringLevel >= 2 && fieldLevel >= 2 ? 2 : 1,
+    allBuildingsMastered: gatheringLevel >= CAVE_MAX_LEVEL && fieldLevel >= CAVE_MAX_LEVEL && pavilionLevel >= CAVE_MAX_LEVEL,
+  };
+};
 
 export const getCaveProduction = (cave: CaveState) => {
   const effects = getCaveEffects(cave);

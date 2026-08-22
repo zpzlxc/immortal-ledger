@@ -121,12 +121,33 @@ export const BREAKTHROUGH_FAILURE_COOLDOWN_MINUTES = 60;
 export const SECT_DEFECTION_COOLDOWN_MINUTES = 120;
 export const SAVE_KEY = 'immortal-ledger-save-v1';
 
+export const CONTINUOUS_ACTION_TYPES: ActionType[] = [
+  'meditate',
+  'temper',
+  'insight',
+  'overdrive',
+  'study',
+];
+
+export const PRACTICE_PLAN_OPTIONS = [
+  { minutes: 0, label: '单次' },
+  { minutes: 60, label: '1 小时' },
+  { minutes: 4 * 60, label: '4 小时' },
+  { minutes: 8 * 60, label: '8 小时' },
+] as const;
+
+export const isContinuousAction = (type: ActionType) =>
+  CONTINUOUS_ACTION_TYPES.includes(type);
+
 export const formatRealm = (major: string, stage: number) => {
   if (major === 'foundation_establishment') {
     return `筑基${stage === 1 ? '初期' : stage === 2 ? '中期' : stage === 3 ? '后期' : '圆满'}`;
   }
   return `炼气${stage}层`;
 };
+
+export const getRealmStageCap = (major: string) =>
+  major === 'foundation_establishment' ? 4 : 12;
 
 export const formatAge = (ageDays: number) => {
   const years = Math.floor(ageDays / 365);

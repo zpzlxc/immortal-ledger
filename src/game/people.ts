@@ -188,6 +188,7 @@ export type PersonEventChoice = {
   label: string;
   summary: string;
   effects: PersonEventEffects;
+  consequenceHint?: string;
 };
 
 export type PersonEventDefinition = {
@@ -223,6 +224,7 @@ export const PERSON_EVENTS: Record<PersonEventId, PersonEventDefinition> = {
         id: 'decline-business',
         label: '婉拒这桩生意',
         summary: '陌生人的货箱和旧信都太像麻烦，你决定先把自己的脚印看牢。',
+        consequenceHint: '可能中断林秋的本世后续',
         effects: { affinity: -4, fortune: 1 },
       },
     ],
@@ -238,18 +240,21 @@ export const PERSON_EVENTS: Record<PersonEventId, PersonEventDefinition> = {
         id: 'listen-lesson',
         label: '留下听完一课',
         summary: '道人讲得很慢，慢到你终于发现自己平时漏掉的不是口诀，而是呼吸之间的停顿。',
+        consequenceHint: '本世可能错过宗门引荐',
         effects: { affinity: 18, cultivation: 5, mentalState: 3 },
       },
       {
         id: 'ask-about-sect',
         label: '请教宗门去处',
         summary: '你把残卷收好，认真问他：如果一定要找个地方修行，哪里值得留下。',
+        consequenceHint: '开启宗门选择',
         effects: { affinity: 14, sectInvitation: true, techniqueFragments: 1 },
       },
       {
         id: 'leave-quietly',
         label: '谢过后离开',
         summary: '你记下他最后那句没讲完的话，决定先用自己的方式把路走下去。',
+        consequenceHint: '本世可能错过宗门引荐',
         effects: { affinity: 3, mentalState: 1 },
       },
     ],
@@ -277,6 +282,7 @@ export const PERSON_EVENTS: Record<PersonEventId, PersonEventDefinition> = {
         id: 'seal-the-well',
         label: '封回井底',
         summary: '你用石块和符纸封住回声，至少今晚不让它跟着你的影子离开。',
+        consequenceHint: '可能中断无名残魂的本世后续',
         effects: { affinity: -8, mentalState: 4, karma: -1 },
       },
     ],

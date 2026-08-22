@@ -32,8 +32,7 @@ export const getOfflineSummary = (
 
   const previousAction = before.character.currentAction;
   const completedAction = previousAction &&
-    !after.character.currentAction &&
-    now >= previousAction.endsAt
+    !after.character.currentAction
     ? previousAction.type
     : null;
   const caveProduction = {

@@ -39,4 +39,22 @@ describe('offline summary rules', () => {
 
     expect(getOfflineSummary(before, after, now + 2 * MINUTE_MS)).toBeNull();
   });
+
+  it('reports a long plan that ends early at a breakthrough gate', () => {
+    const before = startAction(
+      createGame(),
+      'meditate',
+      now,
+      'qingstone-mountain',
+      undefined,
+      () => 0.99,
+      4 * 60,
+    );
+    const after = settleGame(before, now + 60 * MINUTE_MS, () => 0.99).state;
+    const summary = getOfflineSummary(before, after, now + 60 * MINUTE_MS);
+
+    expect(after.character.currentAction).toBeNull();
+    expect(summary?.completedAction).toBe('meditate');
+    expect(summary?.resourceChanges.cultivation).toBe(100);
+  });
 });

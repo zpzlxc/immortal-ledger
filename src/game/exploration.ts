@@ -54,6 +54,19 @@ export const EXPLORATION_LOCATIONS: Record<ExplorationLocationId, ExplorationLoc
     reward: '稀有功法残页、因果线索、灵石',
     unlockHint: '完成一次黑风谷探索后开放',
   },
+  'cloudbreak-ridge': {
+    id: 'cloudbreak-ridge',
+    label: '云岫古道',
+    icon: '云',
+    image: '/assets/locations/cloudbreak-ridge.png',
+    summary: '石阶悬在云海之上，残破山门后藏着只对筑基修士显形的旧路。',
+    atmosphere: '晨光越过群峰，云雾间偶尔亮起一线像是前世留下的灵痕。',
+    recommendation: '筑基后完成三次试炼',
+    risk: '风险：筑基 · 选择会回应本世旧事',
+    durationMinutes: 45,
+    reward: '大量修为、功法残页、长期剧情标记',
+    unlockHint: '筑基后完成三次筑基试炼开放',
+  },
 };
 
 export const isExplorationLocationUnlocked = (
@@ -132,6 +145,7 @@ export type ExplorationEventChoice = {
   label: string;
   summary: string;
   effects: ExplorationEventEffects;
+  consequenceHint?: string;
 };
 
 export type ExplorationEventDefinition = {
@@ -157,6 +171,7 @@ export const EXPLORATION_EVENTS: Record<ExplorationEventId, ExplorationEventDefi
         id: 'climb-for-bell',
         label: '爬上去取铃',
         summary: '你踩着湿滑的树皮取下铜铃，纸条背面露出一行辨认灵脉的口诀。',
+        consequenceHint: '这枚铜铃可能在筑基后再次回应',
         effects: { spiritSense: 1, techniqueFragments: 1, karma: 1 },
       },
       {
@@ -495,6 +510,41 @@ export const EXPLORATION_EVENTS: Record<ExplorationEventId, ExplorationEventDefi
         summary: '你认为名字应当由自己走出来，而不是从井底领取。回声沉默片刻，留下了一点不属于任何人的气运。',
         effects: { fortune: 3, cultivation: 8, karma: 1 },
       },
+    ],
+  },
+  'cloudbreak-stone-gate': {
+    id: 'cloudbreak-stone-gate',
+    locationId: 'cloudbreak-ridge',
+    title: '山门只认走过的路',
+    eyebrow: 'CLOUDBREAK RIDGE · 云岫古道',
+    summary: '残破山门没有门扇，只有三道被云水磨浅的刻痕。你靠近时，它们依次映出青石山、黑风谷和无名古井。',
+    choices: [
+      { id: 'carve-this-life', label: '刻下本世名字', summary: '你不借前人的名号，只把这一世的名字留在最浅的一道石痕里。', effects: { cultivation: 28, mentalState: 4, karma: 1 } },
+      { id: 'read-old-marks', label: '先读旧日刻痕', summary: '你沿着旧痕辨认前人的呼吸，残缺的运气法门在识海中重新连成一页。', effects: { techniqueFragments: 3, spiritSense: 2, mentalState: -2 } },
+    ],
+  },
+  'cloudbreak-red-thread': {
+    id: 'cloudbreak-red-thread',
+    locationId: 'cloudbreak-ridge',
+    title: '红线越过云海',
+    eyebrow: 'CHOICE ECHO · 铃声的后文',
+    summary: '一根褪色红线从山脚一直系到云上。你认出它与青石山树梢的铜铃同出一处，只是这一次，线的另一端系着一扇门。',
+    condition: (state) => state.story.worldFlags.includes('exploration:qingstone-red-bell:climb-for-bell'),
+    choices: [
+      { id: 'return-the-bell', label: '把铜铃还给云门', summary: '铃声终于找到归处，门后送来一阵温和灵风，替你梳理了尚未稳固的道基。', effects: { cultivation: 36, mentalState: 5, karma: 2 } },
+      { id: 'keep-the-bell', label: '留下铜铃继续前行', summary: '你把铃声留作自己的路标。它不再指向过去，而开始回应更远处的山风。', effects: { fortune: 3, spiritSense: 2, techniqueFragments: 2 } },
+    ],
+  },
+  'cloudbreak-name-echo': {
+    id: 'cloudbreak-name-echo',
+    locationId: 'cloudbreak-ridge',
+    title: '云海念出旧名',
+    eyebrow: 'CHOICE ECHO · 无名之后',
+    summary: '云海深处有人念出一个曾在古井中出现的名字。那不是召唤，更像是在问：你最终替谁保留了它。',
+    condition: (state) => state.story.worldFlags.some((flag) => flag.startsWith('person:nameless-well-ending:')),
+    choices: [
+      { id: 'answer-for-the-soul', label: '替残魂回应', summary: '你替那段没有主人认领的旧事应了一声，云中因果随之松开一个结。', effects: { karma: -2, cultivation: 32, mentalState: 3 } },
+      { id: 'answer-as-yourself', label: '只报自己的名字', summary: '你没有替任何前尘作答。云海散开时，一道属于你自己的路出现在脚下。', effects: { fortune: 3, spiritSense: 2, cultivation: 20 } },
     ],
   },
 };

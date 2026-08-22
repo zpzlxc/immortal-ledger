@@ -9,6 +9,7 @@ import {
 import { createNewGame, normalizeGameState } from './save';
 import { getWorldCycle } from './exploration';
 import {
+  craftHealingPill,
   getBreakthroughStartError,
   getActionStartError,
   defectSect,
@@ -30,6 +31,75 @@ const now = Date.parse('2026-01-01T00:00:00.000Z');
 const createGame = () => createNewGame('沈砚', [], undefined, [], now);
 
 describe('settlement rules', () => {
+  it('runs a long cultivation plan as ordinary cycles and stops at the breakthrough gate', () => {
+    const active = startAction(
+      createGame(),
+      'meditate',
+      now,
+      'qingstone-mountain',
+      undefined,
+      () => 0.99,
+      4 * 60,
+    );
+
+    expect(active.character.currentAction?.plannedCycles).toBe(48);
+    expect(active.character.currentAction?.endsAt).toBe(now + 4 * 60 * MINUTE_MS);
+
+    const settled = settleGame(active, now + 4 * 60 * MINUTE_MS, () => 0.99);
+
+    expect(settled.state.character.currentAction).toBeNull();
+    expect(settled.state.character.realm.cultivation).toBe(100);
+    expect(settled.newEntries).toHaveLength(1);
+    expect(settled.newEntries[0]?.title).toContain('提前出关');
+    expect(settled.newEntries[0]?.tags).toContain('完成 5 轮');
+    expect(settled.newEntries[0]?.tags).toContain('修为 +100');
+  });
+
+  it('keeps a long plan active between cycles and writes one summary at the end', () => {
+    const active = startAction(
+      createGame(),
+      'insight',
+      now,
+      'qingstone-mountain',
+      undefined,
+      () => 0.99,
+      60,
+    );
+    const partial = settleGame(active, now + 24 * MINUTE_MS, () => 0.99);
+
+    expect(partial.state.character.currentAction?.completedCycles).toBe(2);
+    expect(partial.state.character.attributes.comprehension).toBe(12);
+    expect(partial.newEntries).toHaveLength(0);
+
+    const completed = settleGame(partial.state, now + 60 * MINUTE_MS, () => 0.99);
+
+    expect(completed.state.character.currentAction).toBeNull();
+    expect(completed.state.character.attributes.comprehension).toBe(15);
+    expect(completed.newEntries).toHaveLength(1);
+    expect(completed.newEntries[0]?.tags).toContain('完成 5 轮');
+    expect(completed.newEntries[0]?.tags).toContain('悟性 +5');
+  });
+
+  it('pauses continuous study when a person event needs a response', () => {
+    const state = createGame();
+    state.cultivationPath.schoolId = 'sword';
+    const active = startAction(
+      state,
+      'study',
+      now,
+      'qingstone-mountain',
+      undefined,
+      () => 0.99,
+      4 * 60,
+    );
+    const settled = settleGame(active, now + 4 * 60 * MINUTE_MS, () => 0.99);
+
+    expect(settled.state.character.currentAction).toBeNull();
+    expect(settled.state.social.pendingPersonEvent?.eventId).toBe('xuan-song-lesson');
+    expect(settled.newEntries.some((entry) => entry.title.includes('提前出关'))).toBe(true);
+    expect(settled.newEntries.some((entry) => entry.title === '人物事件：松下三问')).toBe(true);
+  });
+
   it('settles a completed action once', () => {
     const active = startAction(createGame(), 'meditate', now, 'qingstone-mountain', undefined, () => 0);
     const first = settleGame(active, now + 5 * MINUTE_MS, () => 0.99);
@@ -463,5 +533,106 @@ describe('settlement rules', () => {
     expect(normalized.lastExplorationEventId).toBeNull();
     expect(normalized.character.injury).toBeNull();
     expect(normalized.character.breakthroughCooldownUntil).toBeNull();
+  });
+
+  it('stops progression at foundation completion instead of creating hidden stages', () => {
+    const state = createGame();
+    state.character.realm = {
+      major: 'foundation_establishment',
+      stage: 4,
+      cultivation: 500,
+      cultivationRequired: 500,
+    };
+
+    expect(getBreakthroughStartError(state, now)).toContain('尚未开放金丹境');
+  });
+
+  it('does not inherit this-life locations until the life ends', () => {
+    const state = createGame();
+    state.discoveredLocations = ['qingstone-mountain', 'blackwind-valley', 'nameless-well'];
+
+    const normalized = normalizeGameState(state);
+
+    expect(normalized.legacy.discoveredLocations).toEqual([]);
+  });
+
+  it('records choices structurally so later stories can react to them', () => {
+    const state = createGame();
+    state.pendingExplorationEvent = { eventId: 'qingstone-red-bell', createdAt: now };
+
+    const resolved = resolveExplorationEvent(state, 'climb-for-bell', now);
+
+    expect(resolved.state.story.choiceHistory.at(-1)).toMatchObject({
+      kind: 'exploration',
+      eventId: 'qingstone-red-bell',
+      choiceId: 'climb-for-bell',
+    });
+    expect(resolved.state.story.worldFlags).toContain('exploration:qingstone-red-bell:climb-for-bell');
+  });
+
+  it('opens Cloudbreak Ridge after three foundation trials', () => {
+    let state = createGame();
+    state.character.realm.major = 'foundation_establishment';
+    for (let index = 0; index < 3; index += 1) {
+      const startedAt = now + index * 45 * MINUTE_MS;
+      state = settleGame(
+        startAction(state, 'foundation_trial', startedAt, 'qingstone-mountain', undefined, () => 0),
+        startedAt + 45 * MINUTE_MS,
+        () => 0.99,
+      ).state;
+    }
+
+    expect(state.story.foundationTrialCount).toBe(3);
+    expect(state.discoveredLocations).toContain('cloudbreak-ridge');
+    expect(state.story.worldFlags).toContain('foundation-cloud-path-open');
+  });
+
+  it('turns cave resources into a stored healing pill', () => {
+    const state = createGame();
+    state.cave.unlocked = true;
+    state.inventory.herbs = 4;
+    state.inventory.spiritStones = 6;
+
+    const crafted = craftHealingPill(state, now);
+
+    expect(crafted.error).toBeUndefined();
+    expect(crafted.state.inventory).toMatchObject({ herbs: 0, spiritStones: 0, healingPills: 1 });
+    expect(crafted.newEntries[0]?.tags).toContain('养脉丹 +1');
+
+    crafted.state.character.injury = { severity: 3, recoveryPoints: 8, source: 'exploration', startedAt: now };
+    const treated = treatInjury(crafted.state, now, 'pill');
+    expect(treated.state.inventory.healingPills).toBe(0);
+    expect(treated.state.character.injury?.recoveryPoints).toBe(2);
+    expect(treated.newEntries[0]?.tags).toContain('恢复进度 +6');
+  });
+
+  it('uses upgraded cave buildings as a medicine-production combination', () => {
+    const state = createGame();
+    state.cave.unlocked = true;
+    state.cave.buildings['spirit-gathering-array'].level = 2;
+    state.cave.buildings['spirit-field'].level = 2;
+    state.inventory.herbs = 4;
+    state.inventory.spiritStones = 6;
+
+    const crafted = craftHealingPill(state, now);
+
+    expect(crafted.state.inventory.healingPills).toBe(2);
+    expect(crafted.newEntries[0]?.tags).toContain('洞府组合生效');
+  });
+
+  it('can end a life when another dangerous action pushes an injury past its limit', () => {
+    const state = createGame();
+    state.discoveredLocations.push('blackwind-valley');
+    state.character.injury = { severity: 2, recoveryPoints: 9, source: 'exploration', startedAt: now };
+
+    const settled = settleGame(
+      startAction(state, 'explore', now, 'blackwind-valley', undefined, () => 0),
+      now + 25 * MINUTE_MS,
+      () => 0,
+    );
+
+    expect(settled.state.lifeStatus).toBe('dead');
+    expect(settled.state.lifeSummary?.deathReason).toBe('fatal_injury');
+    expect(settled.newEntries.at(-1)?.category).toBe('death');
   });
 });

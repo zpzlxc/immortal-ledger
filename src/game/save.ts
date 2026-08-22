@@ -22,6 +22,9 @@ import type {
   Realm,
   SectPositionId,
 } from './types';
+import { createStoryState, normalizeStoryState } from './story';
+
+export const CURRENT_SCHEMA_VERSION = 13;
 
 const createId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -29,6 +32,7 @@ const LOCATION_IDS: ExplorationLocationId[] = [
   'qingstone-mountain',
   'blackwind-valley',
   'nameless-well',
+  'cloudbreak-ridge',
 ];
 
 const isExplorationLocationId = (locationId: unknown): locationId is ExplorationLocationId =>
@@ -63,8 +67,8 @@ const normalizeRealm = (input?: Partial<Realm>): Realm => ({
 
 const normalizeLifeSummary = (input?: Partial<LifeSummary>): LifeSummary | null => {
   if (!input) return null;
-  const deathReason: DeathReason = input.deathReason === 'lifespan_exhausted'
-    ? input.deathReason
+  const deathReason: DeathReason = input.deathReason === 'fatal_injury'
+    ? 'fatal_injury'
     : 'lifespan_exhausted';
   return {
     lifeNumber: Math.max(1, Number(input.lifeNumber) || 1),
@@ -131,7 +135,7 @@ export const createNewGame = (
     );
 
   return {
-    schemaVersion: 11,
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     lifeStatus: 'alive',
     lifeSummary: null,
     pastLives: pastLives
@@ -169,6 +173,7 @@ export const createNewGame = (
       spiritStones: 30,
       herbs: 3,
       techniqueFragments: legacy.techniqueFragments,
+      healingPills: 0,
     },
     cave: createCave(now),
     cultivationPath: createCultivationPath(),
@@ -176,6 +181,7 @@ export const createNewGame = (
     pendingExplorationEvent: null,
     completedExplorationEventIds: [],
     lastExplorationEventId: null,
+    story: createStoryState(),
     discoveredLocations,
     ledger: [openingEntry],
   };
@@ -200,17 +206,57 @@ export const normalizeGameState = (input: GameState): GameState => {
   if (state.lifeStatus === 'dead') {
     state.character.currentAction = null;
   }
+  if (state.character.currentAction) {
+    const action = state.character.currentAction;
+    const cycleDurationMinutes = Number(action.cycleDurationMinutes);
+    const plannedCycles = Number(action.plannedCycles);
+    const completedCycles = Number(action.completedCycles);
+    if (
+      Number.isFinite(cycleDurationMinutes) && cycleDurationMinutes > 0 &&
+      Number.isFinite(plannedCycles) && plannedCycles > 1
+    ) {
+      action.cycleDurationMinutes = cycleDurationMinutes;
+      action.plannedCycles = Math.max(1, Math.floor(plannedCycles));
+      action.completedCycles = Math.max(
+        0,
+        Math.min(action.plannedCycles, Math.floor(completedCycles) || 0),
+      );
+      const progress = action.batchProgress;
+      action.batchProgress = {
+        cultivation: Number(progress?.cultivation) || 0,
+        spiritStones: Number(progress?.spiritStones) || 0,
+        herbs: Number(progress?.herbs) || 0,
+        techniqueFragments: Number(progress?.techniqueFragments) || 0,
+        physique: Number(progress?.physique) || 0,
+        comprehension: Number(progress?.comprehension) || 0,
+        spiritSense: Number(progress?.spiritSense) || 0,
+        mentalState: Number(progress?.mentalState) || 0,
+        proficiency: Number(progress?.proficiency) || 0,
+      };
+    } else {
+      delete action.cycleDurationMinutes;
+      delete action.plannedCycles;
+      delete action.completedCycles;
+      delete action.batchProgress;
+    }
+  }
   state.character.injury = normalizeInjury(input.character.injury);
   const breakthroughCooldownUntil = Number(input.character.breakthroughCooldownUntil);
   state.character.breakthroughCooldownUntil = Number.isFinite(breakthroughCooldownUntil) && breakthroughCooldownUntil > 0
     ? breakthroughCooldownUntil
     : null;
+  state.inventory = {
+    spiritStones: Math.max(0, Number(input.inventory?.spiritStones) || 0),
+    herbs: Math.max(0, Number(input.inventory?.herbs) || 0),
+    techniqueFragments: Math.max(0, Number(input.inventory?.techniqueFragments) || 0),
+    healingPills: Math.max(0, Number(input.inventory?.healingPills) || 0),
+  };
   const legacyCave = input.cave;
   const shouldUnlockCave = Boolean(legacyCave?.unlocked || hasCompletedExploration(state));
   const initialCave = createCave(now, shouldUnlockCave);
   const cave = legacyCave ?? initialCave;
 
-  state.schemaVersion = Math.max(11, Number(state.schemaVersion) || 1);
+  state.schemaVersion = CURRENT_SCHEMA_VERSION;
   state.cave = {
     ...initialCave,
     ...cave,
@@ -348,13 +394,15 @@ export const normalizeGameState = (input: GameState): GameState => {
   state.lastExplorationEventId = input.lastExplorationEventId && input.lastExplorationEventId in EXPLORATION_EVENTS
     ? input.lastExplorationEventId
     : null;
+  state.story = normalizeStoryState(input.story);
 
   const discovered = new Set<ExplorationLocationId>(
     (state.discoveredLocations ?? []).filter(
       (locationId): locationId is ExplorationLocationId =>
         locationId === 'qingstone-mountain' ||
         locationId === 'blackwind-valley' ||
-        locationId === 'nameless-well',
+        locationId === 'nameless-well' ||
+        locationId === 'cloudbreak-ridge',
     ),
   );
   discovered.add('qingstone-mountain');
@@ -367,10 +415,6 @@ export const normalizeGameState = (input: GameState): GameState => {
     discovered.add('nameless-well');
   }
   state.discoveredLocations = [...discovered];
-  state.legacy.discoveredLocations = Array.from(new Set([
-    ...state.legacy.discoveredLocations,
-    ...state.discoveredLocations,
-  ])).filter(isExplorationLocationId);
   return state;
 };
 
@@ -379,9 +423,7 @@ export const loadGame = (): GameState | null => {
   if (!raw) return null;
 
   try {
-    const parsed = JSON.parse(raw) as GameState;
-    if (!parsed.character || !parsed.ledger || !parsed.inventory) return null;
-    return normalizeGameState(parsed);
+    return parseSaveText(raw);
   } catch {
     return null;
   }
@@ -416,16 +458,29 @@ export const downloadSave = (state: GameState) => {
   URL.revokeObjectURL(url);
 };
 
+export const parseSaveText = (raw: string): GameState => {
+  const parsed = JSON.parse(raw) as Partial<GameState>;
+  if (
+    !parsed ||
+    typeof parsed !== 'object' ||
+    !parsed.character ||
+    !Array.isArray(parsed.ledger) ||
+    !parsed.inventory
+  ) {
+    throw new Error('存档缺少必要字段');
+  }
+  if (Number(parsed.schemaVersion) > CURRENT_SCHEMA_VERSION) {
+    throw new Error('该存档来自更新版本，请升级游戏后再导入');
+  }
+  return normalizeGameState(parsed as GameState);
+};
+
 export const parseSaveFile = (file: File): Promise<GameState> =>
   new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const parsed = JSON.parse(String(reader.result)) as GameState;
-        if (!parsed.character || !parsed.ledger || !parsed.inventory) {
-          throw new Error('存档缺少必要字段');
-        }
-        resolve(normalizeGameState(parsed));
+        resolve(parseSaveText(String(reader.result)));
       } catch (error) {
         reject(error);
       }

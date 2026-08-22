@@ -1,6 +1,6 @@
 export type ActionType = 'meditate' | 'temper' | 'insight' | 'overdrive' | 'explore' | 'study' | 'sect_mission' | 'breakthrough' | 'foundation_trial';
 
-export type ExplorationLocationId = 'qingstone-mountain' | 'blackwind-valley' | 'nameless-well';
+export type ExplorationLocationId = 'qingstone-mountain' | 'blackwind-valley' | 'nameless-well' | 'cloudbreak-ridge';
 
 export type ExplorationEventId =
   | 'qingstone-red-bell'
@@ -17,11 +17,29 @@ export type ExplorationEventId =
   | 'nameless-empty-lantern'
   | 'nameless-moon-tide'
   | 'nameless-starfall'
-  | 'nameless-true-name';
+  | 'nameless-true-name'
+  | 'cloudbreak-stone-gate'
+  | 'cloudbreak-red-thread'
+  | 'cloudbreak-name-echo';
 
 export type PendingExplorationEvent = {
   eventId: ExplorationEventId;
   createdAt: number;
+};
+
+export type StoryChoiceKind = 'exploration' | 'person';
+
+export type StoryChoiceRecord = {
+  kind: StoryChoiceKind;
+  eventId: ExplorationEventId | PersonEventId;
+  choiceId: string;
+  chosenAt: number;
+};
+
+export type StoryState = {
+  choiceHistory: StoryChoiceRecord[];
+  worldFlags: string[];
+  foundationTrialCount: number;
 };
 
 export type CultivationSchoolId = 'sword' | 'alchemy' | 'formation' | 'soul';
@@ -126,6 +144,20 @@ export type CurrentAction = {
   type: ActionType;
   startedAt: number;
   endsAt: number;
+  cycleDurationMinutes?: number;
+  plannedCycles?: number;
+  completedCycles?: number;
+  batchProgress?: {
+    cultivation: number;
+    spiritStones: number;
+    herbs: number;
+    techniqueFragments: number;
+    physique: number;
+    comprehension: number;
+    spiritSense: number;
+    mentalState: number;
+    proficiency: number;
+  };
   locationId?: ExplorationLocationId;
   missionId?: SectMissionId;
 };
@@ -162,7 +194,7 @@ export type Character = {
 
 export type LifeStatus = 'alive' | 'dead';
 
-export type DeathReason = 'lifespan_exhausted';
+export type DeathReason = 'lifespan_exhausted' | 'fatal_injury';
 
 export type LifeSummary = {
   lifeNumber: number;
@@ -199,6 +231,7 @@ export type Inventory = {
   spiritStones: number;
   herbs: number;
   techniqueFragments: number;
+  healingPills: number;
 };
 
 export type CaveBuildingId = 'spirit-gathering-array' | 'spirit-field' | 'scripture-pavilion';
@@ -232,6 +265,7 @@ export type GameState = {
   pendingExplorationEvent: PendingExplorationEvent | null;
   completedExplorationEventIds: ExplorationEventId[];
   lastExplorationEventId: ExplorationEventId | null;
+  story: StoryState;
   ledger: LedgerEntry[];
   discoveredLocations: string[];
 };

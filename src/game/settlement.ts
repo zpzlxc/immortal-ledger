@@ -4,14 +4,14 @@ import {
   BREAKTHROUGH_FAILURE_COOLDOWN_MINUTES,
   MAX_OFFLINE_MINUTES,
   REAL_MINUTE_TO_GAME_DAYS,
+  getRealmStageCap,
+  isContinuousAction,
   SECT_DEFECTION_COOLDOWN_MINUTES,
 } from './content';
 import {
-  CAVE_BUILDINGS,
   createCave,
   getActionDurationMinutes,
   getCaveEffects,
-  getUpgradeCost,
   settleCave,
 } from './cave';
 import {
@@ -53,7 +53,6 @@ import {
 } from './techniques';
 import type {
   ActionType,
-  CaveBuildingId,
   CultivationSchoolId,
   ExplorationEventId,
   ExplorationLocationId,
@@ -66,8 +65,28 @@ import type {
   SectMissionId,
   SettlementResult,
 } from './types';
+import { createStoryState, recordStoryChoice } from './story';
 
 const MINUTE_MS = 60_000;
+
+const createBatchProgress = () => ({
+  cultivation: 0,
+  spiritStones: 0,
+  herbs: 0,
+  techniqueFragments: 0,
+  physique: 0,
+  comprehension: 0,
+  spiritSense: 0,
+  mentalState: 0,
+  proficiency: 0,
+});
+
+const formatPlanDuration = (minutes: number) => {
+  if (minutes < 60) return `${minutes} 分钟`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return remainder > 0 ? `${hours} 小时 ${remainder} 分钟` : `${hours} 小时`;
+};
 
 export type RandomSource = () => number;
 
@@ -251,7 +270,8 @@ const endLife = (
         (locationId): locationId is ExplorationLocationId =>
           locationId === 'qingstone-mountain' ||
           locationId === 'blackwind-valley' ||
-          locationId === 'nameless-well',
+          locationId === 'nameless-well' ||
+          locationId === 'cloudbreak-ridge',
       ),
     ])),
     techniqueFragments: Math.min(3, Math.max(0, state.inventory.techniqueFragments)),
@@ -262,11 +282,12 @@ const endLife = (
   state.social.pendingPersonEvent = null;
 
   const ageYears = Math.floor(character.ageDays / 365);
+  const reasonLabel = deathReason === 'fatal_injury' ? '重伤不治' : '寿元耗尽';
   return createLedgerEntry(
     'death',
     '本世终章',
     `${character.name}在${ageYears}岁时走完了这一世。长生簿合上最后一页，却替你保留了这段人生走过的山河与名字。`,
-    ['终章', '寿元耗尽', `第${lifeNumber}世`],
+    ['终章', reasonLabel, `第${lifeNumber}世`],
     endedAt,
   );
 };
@@ -406,18 +427,15 @@ const CAVE_UNLOCK_RESULTS = [
   '你在猎户旧棚后发现一条被藤根封住的石缝。石缝尽头有一方干燥小室，恰好够放下蒲团，也够放下一个修仙梦。',
 ];
 
-const CAVE_COLLECTION_RESULTS = [
-  '你打开储物石室，把聚灵阵吐纳出的灵气和灵田养熟的灵草收拢起来。洞府第一次像是有了真正的主人。',
-  '阵盘上的微光逐渐熄下，你将积攒的灵气引入丹田，又把灵草扎成一束，顺手挂在洞口晾晒。',
-  '收获不算惊天动地，却很踏实：一部分进了经脉，一部分进了药篓。修仙的家底，就是这样一点点攒出来的。',
-];
-
 const resolveBreakthrough = (
   state: GameState,
   completedAt: number,
   random: RandomSource,
 ) => {
   const { character } = state;
+  if (character.realm.stage >= getRealmStageCap(character.realm.major) && character.realm.major === 'foundation_establishment') {
+    return [];
+  }
   if (character.realm.cultivation < character.realm.cultivationRequired) return [];
   if (character.breakthroughCooldownUntil && character.breakthroughCooldownUntil > completedAt) return [];
 
@@ -522,6 +540,15 @@ const actionResult = (
     title = choose(['云外峰场归来', '试炼石阶尽头', '筑基后的一次远行']);
     body = `${choose(ACTION_PLAN_NOTES.foundation_trial)}你在断云石台下找到灵石 ${stoneGain} 枚和功法残页 ${fragmentGain} 页，带回来的不只是收获，还有一段关于更高境界的模糊预感。`;
     changes.push(`灵石 +${stoneGain}`, `功法残页 +${fragmentGain}`, `修为 +${cultivationGain}`);
+    state.story.foundationTrialCount += 1;
+    if (state.story.foundationTrialCount >= 3 && !state.story.worldFlags.includes('foundation-cloud-path-open')) {
+      state.story.worldFlags.push('foundation-cloud-path-open');
+      if (!state.discoveredLocations.includes('cloudbreak-ridge')) {
+        state.discoveredLocations.push('cloudbreak-ridge');
+        newlyDiscoveredLocation = 'cloudbreak-ridge';
+      }
+      changes.push('解锁线索：云岫古道');
+    }
   }
 
   if (actionType === 'meditate') {
@@ -673,6 +700,18 @@ const actionResult = (
       }
     }
 
+    if (locationId === 'cloudbreak-ridge') {
+      const stoneGain = randomInt(18, 28, random);
+      const fragmentGain = randomInt(2, 4, random);
+      inventory.spiritStones += stoneGain;
+      inventory.techniqueFragments += fragmentGain;
+      cultivationGain = 30 + character.realm.stage * 4;
+      character.attributes.mentalState = Math.min(100, character.attributes.mentalState + 2);
+      title = choose(['云岫古道归来', '山门外的一轮晨光', '踏云问路']);
+      body = `你沿悬在云海上的石阶走到残门之前，带回灵石 ${stoneGain} 枚、功法残页 ${fragmentGain} 页，也让筑基后的灵息第一次真正沉入四肢百骸。`;
+      changes.push(`灵石 +${stoneGain}`, `功法残页 +${fragmentGain}`, `修为 +${cultivationGain}`, '心境 +2');
+    }
+
     const nextLocationId: ExplorationLocationId | null =
       locationId === 'qingstone-mountain'
         ? 'blackwind-valley'
@@ -801,6 +840,71 @@ const actionResult = (
   return entries;
 };
 
+const captureBatchValues = (state: GameState) => ({
+  cultivation: state.character.realm.cultivation,
+  spiritStones: state.inventory.spiritStones,
+  herbs: state.inventory.herbs,
+  techniqueFragments: state.inventory.techniqueFragments,
+  physique: state.character.attributes.physique,
+  comprehension: state.character.attributes.comprehension,
+  spiritSense: state.character.attributes.spiritSense,
+  mentalState: state.character.attributes.mentalState,
+  proficiency: getTechniqueProgress(state.cultivationPath)?.proficiency ?? 0,
+});
+
+const accumulateBatchProgress = (
+  progress: NonNullable<GameState['character']['currentAction']>['batchProgress'],
+  before: ReturnType<typeof captureBatchValues>,
+  after: ReturnType<typeof captureBatchValues>,
+) => {
+  if (!progress) return;
+  for (const key of Object.keys(before) as Array<keyof typeof before>) {
+    progress[key] += after[key] - before[key];
+  }
+};
+
+const createBatchSummaryEntry = (
+  action: NonNullable<GameState['character']['currentAction']>,
+  completedAt: number,
+  stopReason: 'completed' | 'breakthrough' | 'injury' | 'event' | 'death',
+) => {
+  const cycles = action.completedCycles ?? 0;
+  const cycleMinutes = action.cycleDurationMinutes ?? ACTIONS[action.type].durationMinutes;
+  const elapsedMinutes = cycles * cycleMinutes;
+  const progress = action.batchProgress ?? createBatchProgress();
+  const reasonText = {
+    completed: '原定功课已经完成，你按时收功。',
+    breakthrough: '修为触及当前关隘，长生簿替你提前结束了后续功课。',
+    injury: '伤势已经不适合继续冒险运功，你及时停下了后续功课。',
+    event: '修行中有人与事叩响门扉，你暂且停下功课，等待回应。',
+    death: '这段修行未能走到原定终点。',
+  }[stopReason];
+  const signedTag = (label: string, value: number) =>
+    value === 0 ? '' : `${label} ${value > 0 ? '+' : ''}${value}`;
+  const tags = [
+    `完成 ${cycles} 轮`,
+    `耗时 ${formatPlanDuration(elapsedMinutes)}`,
+    signedTag('修为', progress.cultivation),
+    signedTag('灵石', progress.spiritStones),
+    signedTag('灵草', progress.herbs),
+    signedTag('功法残页', progress.techniqueFragments),
+    signedTag('根骨', progress.physique),
+    signedTag('悟性', progress.comprehension),
+    signedTag('神识', progress.spiritSense),
+    signedTag('心境', progress.mentalState),
+    signedTag('熟练度', progress.proficiency),
+    stopReason !== 'completed' ? '提前出关' : '',
+  ].filter(Boolean);
+
+  return createLedgerEntry(
+    'action',
+    `${ACTIONS[action.type].label} · ${stopReason === 'completed' ? '闭关功成' : '提前出关'}`,
+    `你连续完成了 ${cycles} 轮「${ACTIONS[action.type].label}」，实际修行 ${formatPlanDuration(elapsedMinutes)}。${reasonText}`,
+    tags,
+    completedAt,
+  );
+};
+
 export const settleGame = (
   input: GameState,
   now = Date.now(),
@@ -825,6 +929,7 @@ export const settleGame = (
   state.pendingExplorationEvent = state.pendingExplorationEvent ?? null;
   state.completedExplorationEventIds = state.completedExplorationEventIds ?? [];
   state.lastExplorationEventId = state.lastExplorationEventId ?? null;
+  state.story = state.story ?? createStoryState();
   const newEntries: LedgerEntry[] = [];
   const elapsedMs = now - state.lastSettledAt;
 
@@ -863,15 +968,82 @@ export const settleGame = (
   }
 
   const cappedElapsedMs = Math.min(elapsedMs, MAX_OFFLINE_MINUTES * MINUTE_MS);
+  let agedActionUntil: number | null = null;
   if (state.character.currentAction) {
     const activeActionMs = Math.min(
       cappedElapsedMs,
       Math.max(0, state.character.currentAction.endsAt - state.lastSettledAt),
     );
     state.character.ageDays += (activeActionMs / MINUTE_MS) * REAL_MINUTE_TO_GAME_DAYS;
+    agedActionUntil = state.lastSettledAt + activeActionMs;
   }
 
-  if (state.character.currentAction && now >= state.character.currentAction.endsAt) {
+  const batchAction = state.character.currentAction;
+  if (batchAction && (batchAction.plannedCycles ?? 1) > 1 && batchAction.cycleDurationMinutes) {
+    const cycleMs = batchAction.cycleDurationMinutes * MINUTE_MS;
+    const dueCycles = Math.min(
+      batchAction.plannedCycles ?? 1,
+      Math.floor((Math.min(now, batchAction.endsAt) - batchAction.startedAt) / cycleMs),
+    );
+    batchAction.completedCycles = batchAction.completedCycles ?? 0;
+    batchAction.batchProgress = batchAction.batchProgress ?? createBatchProgress();
+    let stopReason: 'completed' | 'breakthrough' | 'injury' | 'event' | 'death' | null = null;
+    let stoppedAt: number | null = null;
+
+    while (batchAction.completedCycles < dueCycles && !stopReason) {
+      const completedAt = batchAction.startedAt + (batchAction.completedCycles + 1) * cycleMs;
+      const before = captureBatchValues(state);
+      actionResult(state, batchAction.type, completedAt, random);
+      if (state.social.sect.sectId) state.social.sect.contribution += 1;
+      batchAction.completedCycles += 1;
+      accumulateBatchProgress(batchAction.batchProgress, before, captureBatchValues(state));
+
+      const fatalInjury = state.character.injury?.severity === 3 && state.character.injury.recoveryPoints >= 10;
+      if (fatalInjury) {
+        stopReason = 'death';
+      } else {
+        const personEvent = getNextPersonEvent(state, batchAction);
+        if (personEvent) {
+          state.social.pendingPersonEvent = {
+            eventId: personEvent.id,
+            createdAt: completedAt,
+          };
+          state.social.relationships[personEvent.relationshipId].discovered = true;
+          newEntries.push(
+            createLedgerEntry(
+              'relationship',
+              `人物事件：${personEvent.title}`,
+              personEvent.summary,
+              ['待处理', personEvent.eyebrow],
+              completedAt,
+            ),
+          );
+          stopReason = 'event';
+        } else if (state.character.realm.cultivation >= state.character.realm.cultivationRequired) {
+          stopReason = 'breakthrough';
+        } else if (batchAction.type === 'overdrive' && (state.character.injury?.severity ?? 0) >= 3) {
+          stopReason = 'injury';
+        }
+      }
+      if (stopReason) stoppedAt = completedAt;
+    }
+
+    if (!stopReason && batchAction.completedCycles >= (batchAction.plannedCycles ?? 1)) {
+      stopReason = 'completed';
+      stoppedAt = batchAction.endsAt;
+    }
+
+    if (stopReason && stoppedAt !== null) {
+      if (agedActionUntil && agedActionUntil > stoppedAt) {
+        state.character.ageDays -= ((agedActionUntil - stoppedAt) / MINUTE_MS) * REAL_MINUTE_TO_GAME_DAYS;
+      }
+      newEntries.unshift(createBatchSummaryEntry(batchAction, stoppedAt, stopReason));
+      state.character.currentAction = null;
+      if (stopReason === 'death') {
+        newEntries.push(endLife(state, 'fatal_injury', stoppedAt));
+      }
+    }
+  } else if (state.character.currentAction && now >= state.character.currentAction.endsAt) {
     const completedAction = state.character.currentAction;
     newEntries.push(...actionResult(state, completedAction.type, completedAction.endsAt, random));
     if (state.social.sect.sectId) {
@@ -879,7 +1051,10 @@ export const settleGame = (
     }
     state.character.currentAction = null;
 
-    if (state.character.ageDays < state.character.lifespanDays) {
+    const fatalInjury = state.character.injury?.severity === 3 && state.character.injury.recoveryPoints >= 10;
+    if (fatalInjury) {
+      newEntries.push(endLife(state, 'fatal_injury', completedAction.endsAt));
+    } else if (state.character.ageDays < state.character.lifespanDays) {
       const personEvent = getNextPersonEvent(state, completedAction);
       if (personEvent) {
         state.social.pendingPersonEvent = {
@@ -933,7 +1108,7 @@ export const settleGame = (
     }
   }
 
-  if (state.character.ageDays >= state.character.lifespanDays) {
+  if (state.lifeStatus === 'alive' && state.character.ageDays >= state.character.lifespanDays) {
     newEntries.push(endLife(state, 'lifespan_exhausted', now));
   }
 
@@ -947,6 +1122,12 @@ export const getBreakthroughStartError = (
   now = Date.now(),
 ) => {
   if (input.lifeStatus === 'dead') return '本世已经结束，不能再安排突破。';
+  if (
+    input.character.realm.major === 'foundation_establishment' &&
+    input.character.realm.stage >= getRealmStageCap(input.character.realm.major)
+  ) {
+    return '道基已经修至圆满，当前版本尚未开放金丹境。';
+  }
   if (input.character.currentAction) return '你正在进行另一项行动。';
   if (input.pendingExplorationEvent || input.social?.pendingPersonEvent) {
     return '请先处理眼前的事件，再准备冲关。';
@@ -1005,6 +1186,7 @@ export const startAction = (
   locationId: ExplorationLocationId = 'qingstone-mountain',
   missionId?: SectMissionId,
   random: RandomSource = Math.random,
+  plannedMinutes = 0,
 ): GameState => {
   const state = structuredClone(input);
   if (getActionStartError(state, type, locationId, missionId, now)) return state;
@@ -1013,13 +1195,24 @@ export const startAction = (
     ? locationId
     : 'qingstone-mountain';
   const selectedLocation = type === 'explore' ? getExplorationLocation(selectedLocationId) : null;
-  const duration = getActionDurationMinutes(type, state.cave, selectedLocationId, state.social?.sect?.sectId ?? null, missionId) * MINUTE_MS;
+  const cycleDurationMinutes = getActionDurationMinutes(type, state.cave, selectedLocationId, state.social?.sect?.sectId ?? null, missionId);
+  const plannedCycles = isContinuousAction(type) && plannedMinutes > cycleDurationMinutes
+    ? Math.max(1, Math.floor(plannedMinutes / cycleDurationMinutes))
+    : 1;
+  const durationMinutes = cycleDurationMinutes * plannedCycles;
+  const duration = durationMinutes * MINUTE_MS;
   const choose = <T,>(items: readonly T[]) => pick(items, random);
   state.character.currentAction = {
     id: `${now}-${type}`,
     type,
     startedAt: now,
     endsAt: now + duration,
+    ...(plannedCycles > 1 ? {
+      cycleDurationMinutes,
+      plannedCycles,
+      completedCycles: 0,
+      batchProgress: createBatchProgress(),
+    } : {}),
     ...(type === 'explore' ? { locationId: selectedLocationId } : {}),
     ...(type === 'sect_mission' && missionId ? { missionId } : {}),
   };
@@ -1028,8 +1221,12 @@ export const startAction = (
     createLedgerEntry(
       'system',
       `已安排：${ACTIONS[type].label}`,
-      `${choose(ACTION_PLAN_NOTES[type])}${selectedLocation ? `${selectedLocation.label}：${selectedLocation.summary}` : ACTIONS[type].description}预计在 ${getActionDurationMinutes(type, state.cave, selectedLocationId, state.social?.sect?.sectId ?? null, missionId)} 分钟后完成。你可以关闭网页，回来时查看结果。`,
-      [ACTIONS[type].label, selectedLocation?.risk ?? ACTIONS[type].risk],
+      `${choose(ACTION_PLAN_NOTES[type])}${selectedLocation ? `${selectedLocation.label}：${selectedLocation.summary}` : ACTIONS[type].description}${plannedCycles > 1 ? `已经安排连续 ${plannedCycles} 轮，预计修行 ${formatPlanDuration(durationMinutes)}；触及关隘或伤势过重时会提前出关。` : `预计在 ${durationMinutes} 分钟后完成。`}你可以关闭网页，回来时查看结果。`,
+      [
+        ACTIONS[type].label,
+        selectedLocation?.risk ?? ACTIONS[type].risk,
+        plannedCycles > 1 ? `连续 ${plannedCycles} 轮` : '',
+      ].filter(Boolean),
       now,
     ),
     ...state.ledger,
@@ -1211,7 +1408,7 @@ export const resolveExplorationEvent = (
   }
 
   const effects = choice.effects;
-  const inventoryChecks: Array<keyof GameState['inventory']> = [
+  const inventoryChecks: Array<'spiritStones' | 'herbs' | 'techniqueFragments'> = [
     'spiritStones',
     'herbs',
     'techniqueFragments',
@@ -1244,6 +1441,7 @@ export const resolveExplorationEvent = (
     state.completedExplorationEventIds = [...state.completedExplorationEventIds, event.id];
   }
   state.pendingExplorationEvent = null;
+  state.story = recordStoryChoice(state.story, 'exploration', event.id, choice.id, now);
 
   const signed = (value: number) => `${value > 0 ? '+' : ''}${value}`;
   const changes = [
@@ -1286,7 +1484,7 @@ export const resolvePersonEvent = (
     return { state, newEntries: [], error: '这条人物事件的选项已经失效。' };
   }
 
-  const inventoryEffects: Array<keyof GameState['inventory']> = [
+  const inventoryEffects: Array<'spiritStones' | 'herbs' | 'techniqueFragments'> = [
     'spiritStones',
     'herbs',
     'techniqueFragments',
@@ -1333,6 +1531,7 @@ export const resolvePersonEvent = (
     event.id,
   ];
   state.social.pendingPersonEvent = null;
+  state.story = recordStoryChoice(state.story, 'person', event.id, choice.id, now);
 
   const changes = [
     `${RELATIONSHIPS[event.relationshipId].name}好感 ${effects.affinity > 0 ? '+' : ''}${effects.affinity}`,
@@ -1523,153 +1722,8 @@ export const exchangeSectReputation = (
   return { state, newEntries: [entry] };
 };
 
-export type CaveMutationResult = {
-  state: GameState;
-  newEntries: LedgerEntry[];
-  error?: string;
-};
-
-const settleCaveForMutation = (state: GameState, now: number) => {
-  const settled = settleCave(state.cave ?? createCave(now), now);
-  state.cave = settled.cave;
-  return settled;
-};
-
-export const collectCave = (
-  input: GameState,
-  now = Date.now(),
-  random: RandomSource = Math.random,
-): CaveMutationResult => {
-  const state = structuredClone(input);
-  settleCaveForMutation(state, now);
-
-  if (!state.cave.unlocked) {
-    return { state, newEntries: [], error: '洞府尚未解锁。完成第一次探索后才能进入。' };
-  }
-
-  const collected = { ...state.cave.stored };
-  if (collected.cultivation <= 0 && collected.herbs <= 0) {
-    return { state, newEntries: [], error: '洞府暂时没有可以收取的产出。' };
-  }
-
-  const cultivationBefore = state.character.realm.cultivation;
-  state.character.realm.cultivation += collected.cultivation;
-  state.inventory.herbs += collected.herbs;
-  state.cave.stored = { cultivation: 0, herbs: 0 };
-
-  const entries = [
-    createLedgerEntry(
-      'action',
-      pick(['收好这一笔家底', '洞府今日有所得', '把灵气和灵草带回身边'], random),
-      pick(CAVE_COLLECTION_RESULTS, random),
-      [
-        collected.cultivation > 0 ? `修为 +${collected.cultivation}` : '',
-        collected.herbs > 0 ? `灵草 +${collected.herbs}` : '',
-      ].filter(Boolean),
-      now,
-    ),
-  ];
-  if (
-    cultivationBefore < state.character.realm.cultivationRequired &&
-    state.character.realm.cultivation >= state.character.realm.cultivationRequired
-  ) {
-    entries.push(
-      createLedgerEntry(
-        'breakthrough',
-        '突破的念头',
-        '洞府积攒的灵气汇入丹田，修为已经触及当前瓶颈。你可以继续夯实根基，也可以尝试冲关。',
-        ['突破', '待处理'],
-        now,
-      ),
-    );
-  }
-  state.ledger = [...entries, ...state.ledger].slice(0, 100);
-  return { state, newEntries: entries };
-};
-
-export const treatInjury = (
-  input: GameState,
-  now = Date.now(),
-): CaveMutationResult => {
-  const state = structuredClone(input);
-  settleCaveForMutation(state, now);
-
-  if (!state.cave.unlocked) {
-    return { state, newEntries: [], error: '洞府尚未解锁。完成第一次探索后才能治疗伤势。' };
-  }
-  if (!state.character.injury) {
-    return { state, newEntries: [], error: '当前没有需要治疗的持续伤势。' };
-  }
-  const herbCost = 2;
-  if (state.inventory.herbs < herbCost) {
-    return { state, newEntries: [], error: `还需要 ${herbCost} 株灵草才能调配疗伤药。` };
-  }
-
-  state.inventory.herbs -= herbCost;
-  const recoveryBefore = state.character.injury.recoveryPoints;
-  state.character.injury = recoverInjury(state.character.injury, 3);
-  const healed = !state.character.injury;
-  const entry = createLedgerEntry(
-    'action',
-    healed ? '伤势终于痊愈' : '灵草调养经脉',
-    healed
-      ? '你把灵草熬成一碗苦得发涩的药汤，药力沿着受损经脉慢慢铺开。等最后一缕痛意散去，这段险路才算真正翻页。'
-      : '你在洞府里以灵草温养受创的经脉，疼痛退下去一些，但还需要几次这样的调养才能完全恢复。',
-    [
-      `灵草 -${herbCost}`,
-      healed ? '伤势痊愈' : `恢复进度 +${recoveryBefore - (state.character.injury?.recoveryPoints ?? 0)}`,
-    ],
-    now,
-  );
-  state.ledger = [entry, ...state.ledger].slice(0, 100);
-  return { state, newEntries: [entry] };
-};
-
-export const upgradeCaveBuilding = (
-  input: GameState,
-  buildingId: CaveBuildingId,
-  now = Date.now(),
-  random: RandomSource = Math.random,
-): CaveMutationResult => {
-  const state = structuredClone(input);
-  settleCaveForMutation(state, now);
-
-  if (!state.cave.unlocked) {
-    return { state, newEntries: [], error: '洞府尚未解锁。完成第一次探索后才能建造。' };
-  }
-
-  const building = state.cave.buildings[buildingId];
-  const nextLevel = building.level + 1;
-  const cost = getUpgradeCost(buildingId, nextLevel);
-  if (!cost) {
-    return { state, newEntries: [], error: '这座建筑已经达到最高等级。' };
-  }
-  if (state.inventory.spiritStones < cost.spiritStones || state.inventory.herbs < cost.herbs) {
-    return { state, newEntries: [], error: '材料不足，暂时无法完成这次建造。' };
-  }
-
-  state.inventory.spiritStones -= cost.spiritStones;
-  state.inventory.herbs -= cost.herbs;
-  building.level = nextLevel;
-  const buildingInfo = CAVE_BUILDINGS[buildingId];
-  const entry = createLedgerEntry(
-    'action',
-    pick([
-      `${buildingInfo.label}${nextLevel === 1 ? '落成' : '再上一层'}`,
-      `洞府添置：${buildingInfo.label}`,
-      `${buildingInfo.label}的阵纹亮了起来`,
-    ], random),
-    `你用灵石和灵草重新整理洞府，将${buildingInfo.label}提升到了${nextLevel}级。${pick([
-      '新的阵纹刚刻下，石室里的灵气便顺着纹路流动起来。',
-      '这回不用担心材料白费，洞府的气息确实比之前稳了一截。',
-      '工程不大，却让这处石窟终于有了几分修仙居所的模样。',
-    ], random)}`,
-    [`${buildingInfo.label} Lv.${nextLevel}`, `灵石 -${cost.spiritStones}`, `灵草 -${cost.herbs}`],
-    now,
-  );
-  state.ledger = [entry, ...state.ledger].slice(0, 100);
-  return { state, newEntries: [entry] };
-};
+export { collectCave, craftHealingPill, treatInjury, upgradeCaveBuilding } from './caveActions';
+export type { CaveMutationResult } from './caveActions';
 
 export const tryBreakthrough = (
   input: GameState,
