@@ -174,6 +174,7 @@ export type PersonEventEffects = {
   techniqueFragments?: number;
   cultivation?: number;
   physique?: number;
+  comprehension?: number;
   spiritSense?: number;
   mentalState?: number;
   karma?: number;
@@ -419,6 +420,33 @@ export const PERSON_EVENTS: Record<PersonEventId, PersonEventDefinition> = {
         label: '追问抹去星角的人',
         summary: '你不肯满足于补图，反而追问是谁把那颗星抹掉。阁中人第一次收起笑意，承认这件事和一场旧叛离有关。',
         effects: { affinity: 22, techniqueFragments: 2, sectReputation: 5, sectContribution: 5, karma: -1 },
+      },
+    ],
+  },
+  'foundation-dual-technique': {
+    id: 'foundation-dual-technique',
+    relationshipId: 'xuan-song',
+    title: '两道周天，一座石关',
+    eyebrow: 'FOUNDATION PATHS · 筑基并修',
+    summary: '你带着两门功法走完筑基试炼，石关却没有立即放行。玄松道人站在关外说：并修不是多背一卷口诀，而是要决定两种答案相遇时，究竟由谁先开口。',
+    choices: [
+      {
+        id: 'keep-main-path-clear',
+        label: '守住主次',
+        summary: '你让主修先行、辅修补缺，两道气机不再争抢同一条经脉。石关听见清晰的脚步，终于向两侧退开。',
+        effects: { affinity: 12, cultivation: 18, mentalState: 4 },
+      },
+      {
+        id: 'seek-the-shared-breath',
+        label: '寻找同息',
+        summary: '你没有压下任何一门功法，而是反复寻找它们都愿意停留的那一息。石关没有打开，却在岩面留下了一道新的纹路。',
+        effects: { affinity: 18, techniqueFragments: 2, spiritSense: 1, karma: 1 },
+      },
+      {
+        id: 'let-conflict-speak',
+        label: '让冲突说完',
+        summary: '你放任两道气机正面相撞，再从震荡里辨认各自不能退让的部分。代价不轻，但从此不会把冲突错认成联动。',
+        effects: { affinity: 8, physique: -1, comprehension: 1, cultivation: 30 },
       },
     ],
   },

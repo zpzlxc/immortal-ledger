@@ -55,6 +55,46 @@ describe('save parsing', () => {
     expect(parsed.inventory.healingPills).toBe(0);
   });
 
+  it('keeps a legacy main technique and initializes the auxiliary slot', () => {
+    const state = createNewGame('旧功', [], undefined, [], now);
+    state.cultivationPath.schoolId = 'sword';
+    state.cultivationPath.activeTechniqueId = 'wind-chasing-sword';
+    state.cultivationPath.techniques['wind-chasing-sword'] = {
+      proficiency: 30,
+      activeBranchId: 'listen-wind',
+      unlockedBranchIds: ['listen-wind'],
+    };
+    const legacy = JSON.parse(JSON.stringify(state));
+    legacy.schemaVersion = 13;
+    delete legacy.cultivationPath.auxiliaryTechniqueId;
+
+    const parsed = parseSaveText(JSON.stringify(legacy));
+
+    expect(parsed.cultivationPath.activeTechniqueId).toBe('wind-chasing-sword');
+    expect(parsed.cultivationPath.auxiliaryTechniqueId).toBeNull();
+    expect(parsed.cultivationPath.techniques['wind-chasing-sword']?.proficiency).toBe(30);
+  });
+
+  it('clamps foundation stages and initializes legacy boon and cave mastery fields', () => {
+    const state = createNewGame('旧境', [], undefined, [], now);
+    state.character.realm.major = 'foundation_establishment';
+    state.character.realm.stage = 12;
+    const legacy = JSON.parse(JSON.stringify(state));
+    legacy.schemaVersion = 14;
+    delete legacy.legacy.activeBoonId;
+    delete legacy.cave.mastery;
+
+    const parsed = parseSaveText(JSON.stringify(legacy));
+
+    expect(parsed.character.realm.stage).toBe(4);
+    expect(parsed.legacy.activeBoonId).toBeNull();
+    expect(parsed.cave.mastery).toEqual({
+      spiritMarrowRefinements: 0,
+      yearsHerbRituals: 0,
+      mergedScriptDeductions: 0,
+    });
+  });
+
   it('rejects malformed and future-version saves', () => {
     expect(() => parseSaveText('{"inventory":{}}')).toThrow('存档缺少必要字段');
     const future = createNewGame('来者', [], undefined, [], now);

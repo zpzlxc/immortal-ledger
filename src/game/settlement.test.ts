@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AUXILIARY_TECHNIQUE_COST,
   BREAKTHROUGH_COST_SPIRIT_STONES,
   BREAKTHROUGH_FAILURE_COOLDOWN_MINUTES,
   MAX_OFFLINE_MINUTES,
@@ -9,20 +10,24 @@ import {
 import { createNewGame, normalizeGameState } from './save';
 import { getWorldCycle } from './exploration';
 import {
+  chooseCultivationSchool,
   craftHealingPill,
   getBreakthroughStartError,
   getActionStartError,
   defectSect,
   joinSect,
+  learnAuxiliaryTechnique,
   promoteSectPosition,
   settleGame,
   resolveExplorationEvent,
   resolvePersonEvent,
   startBreakthrough,
   startAction,
+  startTechniqueSwap,
   treatInjury,
   tryBreakthrough,
 } from './settlement';
+import { getTechniqueCombination, getTechniqueEffects } from './techniques';
 import type { GameState } from './types';
 
 const MINUTE_MS = 60_000;
@@ -544,7 +549,7 @@ describe('settlement rules', () => {
       cultivationRequired: 500,
     };
 
-    expect(getBreakthroughStartError(state, now)).toContain('尚未开放金丹境');
+    expect(getBreakthroughStartError(state, now)).toContain('叩问金丹');
   });
 
   it('does not inherit this-life locations until the life ends', () => {
@@ -585,6 +590,82 @@ describe('settlement rules', () => {
     expect(state.story.foundationTrialCount).toBe(3);
     expect(state.discoveredLocations).toContain('cloudbreak-ridge');
     expect(state.story.worldFlags).toContain('foundation-cloud-path-open');
+  });
+
+  it('unlocks one auxiliary technique at foundation with a fragment cost', () => {
+    const chosen = chooseCultivationSchool(createGame(), 'sword', now).state;
+    chosen.character.realm.major = 'foundation_establishment';
+    chosen.inventory.techniqueFragments = 10;
+
+    const learned = learnAuxiliaryTechnique(chosen, 'star-pattern-manual', now);
+
+    expect(learned.error).toBeUndefined();
+    expect(learned.state.inventory.techniqueFragments).toBe(10 - AUXILIARY_TECHNIQUE_COST);
+    expect(learned.state.cultivationPath.activeTechniqueId).toBe('wind-chasing-sword');
+    expect(learned.state.cultivationPath.auxiliaryTechniqueId).toBe('star-pattern-manual');
+    expect(learned.state.cultivationPath.techniques['star-pattern-manual']).toBeDefined();
+    expect(getTechniqueCombination(learned.state.cultivationPath)?.id).toBe('sword-formation-resonance');
+    expect(learnAuxiliaryTechnique(createGame(), 'star-pattern-manual', now).error).toContain('筑基之后');
+  });
+
+  it('applies auxiliary passives, resonance bonuses, and conflict risk', () => {
+    const swordFormation = chooseCultivationSchool(createGame(), 'sword', now).state;
+    swordFormation.character.realm.major = 'foundation_establishment';
+    swordFormation.inventory.techniqueFragments = AUXILIARY_TECHNIQUE_COST;
+    const resonant = learnAuxiliaryTechnique(swordFormation, 'star-pattern-manual', now).state;
+    const effects = getTechniqueEffects(resonant.cultivationPath);
+
+    expect(effects.cultivationMultiplier).toBeCloseTo(0.02);
+    expect(effects.explorationStoneBonus).toBe(1);
+    expect(effects.foundationTrialCultivationMultiplier).toBeCloseTo(0.2);
+
+    const swordSoul = chooseCultivationSchool(createGame(), 'sword', now).state;
+    swordSoul.character.realm.major = 'foundation_establishment';
+    swordSoul.inventory.techniqueFragments = AUXILIARY_TECHNIQUE_COST;
+    const conflicting = learnAuxiliaryTechnique(swordSoul, 'guarding-one-meditation', now).state;
+    expect(getTechniqueEffects(conflicting.cultivationPath).overdriveInjuryChanceBonus).toBeCloseTo(0.2);
+    const settled = settleGame(
+      startAction(conflicting, 'overdrive', now, 'qingstone-mountain', undefined, () => 0.3),
+      now + 10 * MINUTE_MS,
+      () => 0.3,
+    );
+    expect(settled.state.character.injury).not.toBeNull();
+  });
+
+  it('swaps main and auxiliary techniques through a timed action', () => {
+    const chosen = chooseCultivationSchool(createGame(), 'alchemy', now).state;
+    chosen.character.realm.major = 'foundation_establishment';
+    chosen.inventory.techniqueFragments = AUXILIARY_TECHNIQUE_COST;
+    const dual = learnAuxiliaryTechnique(chosen, 'guarding-one-meditation', now).state;
+
+    const started = startTechniqueSwap(dual, now, () => 0);
+    expect(started.error).toBeUndefined();
+    expect(started.state.character.currentAction?.type).toBe('technique_swap');
+    expect(started.state.character.currentAction?.endsAt).toBe(now + 30 * MINUTE_MS);
+
+    const settled = settleGame(started.state, now + 30 * MINUTE_MS, () => 0.99);
+    expect(settled.state.cultivationPath.activeTechniqueId).toBe('guarding-one-meditation');
+    expect(settled.state.cultivationPath.auxiliaryTechniqueId).toBe('hundred-herbs-canon');
+    expect(settled.newEntries[0]?.title).toContain('守一观想法');
+  });
+
+  it('opens and records the foundation dual-technique story', () => {
+    const chosen = chooseCultivationSchool(createGame(), 'sword', now).state;
+    chosen.character.realm.major = 'foundation_establishment';
+    chosen.inventory.techniqueFragments = AUXILIARY_TECHNIQUE_COST;
+    chosen.social.completedPersonEventIds = ['xuan-song-lesson'];
+    const dual = learnAuxiliaryTechnique(chosen, 'star-pattern-manual', now).state;
+
+    const settled = settleGame(
+      startAction(dual, 'foundation_trial', now, 'qingstone-mountain', undefined, () => 0),
+      now + 45 * MINUTE_MS,
+      () => 0.99,
+    );
+    expect(settled.state.social.pendingPersonEvent?.eventId).toBe('foundation-dual-technique');
+
+    const resolved = resolvePersonEvent(settled.state, 'keep-main-path-clear', now + 45 * MINUTE_MS);
+    expect(resolved.state.social.completedPersonEventIds).toContain('foundation-dual-technique');
+    expect(resolved.state.story.worldFlags.some((flag) => flag.startsWith('technique-pair:'))).toBe(true);
   });
 
   it('turns cave resources into a stored healing pill', () => {

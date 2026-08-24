@@ -1,4 +1,4 @@
-export type ActionType = 'meditate' | 'temper' | 'insight' | 'overdrive' | 'explore' | 'study' | 'sect_mission' | 'breakthrough' | 'foundation_trial';
+export type ActionType = 'meditate' | 'temper' | 'insight' | 'overdrive' | 'explore' | 'study' | 'sect_mission' | 'breakthrough' | 'foundation_trial' | 'technique_swap' | 'golden_core_ordeal';
 
 export type ExplorationLocationId = 'qingstone-mountain' | 'blackwind-valley' | 'nameless-well' | 'cloudbreak-ridge';
 
@@ -55,6 +55,7 @@ export type TechniqueProgress = {
 export type CultivationPathState = {
   schoolId: CultivationSchoolId | null;
   activeTechniqueId: TechniqueId | null;
+  auxiliaryTechniqueId: TechniqueId | null;
   techniques: Record<string, TechniqueProgress>;
 };
 
@@ -99,6 +100,7 @@ export type PersonEventId =
   | 'nameless-well-oath'
   | 'nameless-well-gate'
   | 'nameless-well-ending'
+  | 'foundation-dual-technique'
   | 'qingxiao-sword-trial'
   | 'baicao-valley-oath'
   | 'tianji-pavilion-star-chart';
@@ -194,7 +196,18 @@ export type Character = {
 
 export type LifeStatus = 'alive' | 'dead';
 
-export type DeathReason = 'lifespan_exhausted' | 'fatal_injury';
+export type DeathReason = 'lifespan_exhausted' | 'fatal_injury' | 'golden_core_quest';
+
+export type LifeEndingId =
+  | 'unfinished-page'
+  | 'fell-on-the-path'
+  | 'dual-path-core'
+  | 'discord-forged-core'
+  | 'sect-dharma-core'
+  | 'nameless-heart-core'
+  | 'solitary-golden-core';
+
+export type LegacyBoonId = 'old-friend-echo' | 'cave-ember' | 'long-watch-mark';
 
 export type LifeSummary = {
   lifeNumber: number;
@@ -207,6 +220,7 @@ export type LifeSummary = {
   discoveredLocationCount: number;
   discoveredRelationshipCount: number;
   sectId: SectId | null;
+  endingId: LifeEndingId;
   keyEvents: string[];
 };
 
@@ -215,6 +229,7 @@ export type LegacyState = {
   discoveredLocations: ExplorationLocationId[];
   techniqueFragments: number;
   previousLifeNames: string[];
+  activeBoonId: LegacyBoonId | null;
 };
 
 export type LedgerEntry = {
@@ -240,6 +255,14 @@ export type CaveBuilding = {
   level: number;
 };
 
+export type CaveMasteryId = 'spirit-marrow' | 'years-herb' | 'merged-script';
+
+export type CaveMasteryState = {
+  spiritMarrowRefinements: number;
+  yearsHerbRituals: number;
+  mergedScriptDeductions: number;
+};
+
 export type CaveState = {
   unlocked: boolean;
   lastSettledAt: number;
@@ -248,6 +271,7 @@ export type CaveState = {
     herbs: number;
   };
   buildings: Record<CaveBuildingId, CaveBuilding>;
+  mastery: CaveMasteryState;
 };
 
 export type GameState = {

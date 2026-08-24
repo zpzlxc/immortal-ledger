@@ -1,11 +1,13 @@
 import { ACTIONS } from './content';
 import { getExplorationLocation } from './exploration';
 import { getSectEffects, getSectMission } from './people';
-import type { ActionType, CaveBuildingId, CaveState, ExplorationLocationId, SectId, SectMissionId } from './types';
+import type { ActionType, CaveBuildingId, CaveState, ExplorationLocationId, GameState, SectId, SectMissionId } from './types';
 
 export const CAVE_MAX_LEVEL = 3;
 export const CAVE_PRODUCTION_INTERVAL_MINUTES = 60;
 export const CAVE_MAX_OFFLINE_MINUTES = 8 * 60;
+export const MASTERED_CAVE_OFFLINE_BONUS_MINUTES = 4 * 60;
+export const LONG_WATCH_OFFLINE_BONUS_MINUTES = 12 * 60;
 
 export const CAVE_BUILDINGS: Record<
   CaveBuildingId,
@@ -71,6 +73,11 @@ export const createCave = (now = Date.now(), unlocked = false): CaveState => ({
     herbs: 0,
   },
   buildings: createEmptyBuildings(),
+  mastery: {
+    spiritMarrowRefinements: 0,
+    yearsHerbRituals: 0,
+    mergedScriptDeductions: 0,
+  },
 });
 
 export const getUpgradeCost = (buildingId: CaveBuildingId, nextLevel: number) => {
@@ -103,6 +110,16 @@ export const getCaveProduction = (cave: CaveState) => {
   };
 };
 
+export const getOfflineLimitMinutes = (state: Pick<GameState, 'cave' | 'legacy'>) => {
+  const masteredBonus = getCaveEffects(state.cave).allBuildingsMastered
+    ? MASTERED_CAVE_OFFLINE_BONUS_MINUTES
+    : 0;
+  const legacyBonus = state.legacy.activeBoonId === 'long-watch-mark'
+    ? LONG_WATCH_OFFLINE_BONUS_MINUTES
+    : 0;
+  return CAVE_MAX_OFFLINE_MINUTES + masteredBonus + legacyBonus;
+};
+
 export const getActionDurationMinutes = (
   actionType: ActionType,
   cave: CaveState,
@@ -119,7 +136,11 @@ export const getActionDurationMinutes = (
   );
 };
 
-export const settleCave = (input: CaveState, now = Date.now()) => {
+export const settleCave = (
+  input: CaveState,
+  now = Date.now(),
+  maxOfflineMinutes = CAVE_MAX_OFFLINE_MINUTES,
+) => {
   const cave = structuredClone(input);
   if (!cave.unlocked) {
     cave.lastSettledAt = now;
@@ -129,7 +150,7 @@ export const settleCave = (input: CaveState, now = Date.now()) => {
   const elapsedMs = Math.max(0, now - cave.lastSettledAt);
   const cappedElapsedMs = Math.min(
     elapsedMs,
-    CAVE_MAX_OFFLINE_MINUTES * 60_000,
+    maxOfflineMinutes * 60_000,
   );
   const intervals = Math.floor(
     cappedElapsedMs / (CAVE_PRODUCTION_INTERVAL_MINUTES * 60_000),

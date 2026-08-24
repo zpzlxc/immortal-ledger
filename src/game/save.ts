@@ -16,15 +16,18 @@ import type {
   ExplorationLocationId,
   GameState,
   LedgerEntry,
+  LegacyBoonId,
   LegacyState,
+  LifeEndingId,
   LifeSummary,
   PersonEventId,
   Realm,
   SectPositionId,
+  TechniqueId,
 } from './types';
 import { createStoryState, normalizeStoryState } from './story';
 
-export const CURRENT_SCHEMA_VERSION = 13;
+export const CURRENT_SCHEMA_VERSION = 15;
 
 const createId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -43,7 +46,19 @@ export const createLegacyState = (): LegacyState => ({
   discoveredLocations: [],
   techniqueFragments: 0,
   previousLifeNames: [],
+  activeBoonId: null,
 });
+
+const LEGACY_BOON_IDS: LegacyBoonId[] = ['old-friend-echo', 'cave-ember', 'long-watch-mark'];
+const LIFE_ENDING_IDS: LifeEndingId[] = [
+  'unfinished-page',
+  'fell-on-the-path',
+  'dual-path-core',
+  'discord-forged-core',
+  'sect-dharma-core',
+  'nameless-heart-core',
+  'solitary-golden-core',
+];
 
 const normalizeLegacyState = (input?: Partial<LegacyState>): LegacyState => ({
   lifeCount: Math.max(0, Number(input?.lifeCount) || 0),
@@ -56,20 +71,31 @@ const normalizeLegacyState = (input?: Partial<LegacyState>): LegacyState => ({
   previousLifeNames: (Array.isArray(input?.previousLifeNames) ? input.previousLifeNames : [])
     .filter((name): name is string => typeof name === 'string' && name.trim().length > 0)
     .slice(-20),
+  activeBoonId: LEGACY_BOON_IDS.includes(input?.activeBoonId as LegacyBoonId)
+    ? input?.activeBoonId as LegacyBoonId
+    : null,
 });
 
-const normalizeRealm = (input?: Partial<Realm>): Realm => ({
-  major: input?.major === 'foundation_establishment' ? 'foundation_establishment' : 'qi_refining',
-  stage: Math.max(1, Math.min(12, Number(input?.stage) || 1)),
-  cultivation: Math.max(0, Number(input?.cultivation) || 0),
-  cultivationRequired: Math.max(1, Number(input?.cultivationRequired) || 100),
-});
+const normalizeRealm = (input?: Partial<Realm>): Realm => {
+  const major = input?.major === 'foundation_establishment' ? 'foundation_establishment' : 'qi_refining';
+  return {
+    major,
+    stage: Math.max(1, Math.min(major === 'foundation_establishment' ? 4 : 12, Number(input?.stage) || 1)),
+    cultivation: Math.max(0, Number(input?.cultivation) || 0),
+    cultivationRequired: Math.max(1, Number(input?.cultivationRequired) || 100),
+  };
+};
 
 const normalizeLifeSummary = (input?: Partial<LifeSummary>): LifeSummary | null => {
   if (!input) return null;
-  const deathReason: DeathReason = input.deathReason === 'fatal_injury'
-    ? 'fatal_injury'
+  const deathReason: DeathReason = input.deathReason === 'fatal_injury' || input.deathReason === 'golden_core_quest'
+    ? input.deathReason
     : 'lifespan_exhausted';
+  const defaultEnding: LifeEndingId = deathReason === 'fatal_injury'
+    ? 'fell-on-the-path'
+    : deathReason === 'golden_core_quest'
+      ? 'solitary-golden-core'
+      : 'unfinished-page';
   return {
     lifeNumber: Math.max(1, Number(input.lifeNumber) || 1),
     characterName: String(input.characterName || '无名'),
@@ -81,6 +107,9 @@ const normalizeLifeSummary = (input?: Partial<LifeSummary>): LifeSummary | null 
     discoveredLocationCount: Math.max(0, Number(input.discoveredLocationCount) || 0),
     discoveredRelationshipCount: Math.max(0, Number(input.discoveredRelationshipCount) || 0),
     sectId: input.sectId && input.sectId in SECTS ? input.sectId : null,
+    endingId: LIFE_ENDING_IDS.includes(input.endingId as LifeEndingId)
+      ? input.endingId as LifeEndingId
+      : defaultEnding,
     keyEvents: (Array.isArray(input.keyEvents) ? input.keyEvents : [])
       .filter((event): event is string => typeof event === 'string')
       .slice(0, 8),
@@ -134,7 +163,7 @@ export const createNewGame = (
       now,
     );
 
-  return {
+  const state: GameState = {
     schemaVersion: CURRENT_SCHEMA_VERSION,
     lifeStatus: 'alive',
     lifeSummary: null,
@@ -185,6 +214,18 @@ export const createNewGame = (
     discoveredLocations,
     ledger: [openingEntry],
   };
+  if (legacy.activeBoonId === 'old-friend-echo') {
+    for (const relationshipId of ['lin-qiu', 'xuan-song'] as const) {
+      state.social.relationships[relationshipId].discovered = true;
+      state.social.relationships[relationshipId].affinity = 8;
+      state.social.relationships[relationshipId].status = getRelationshipStatus(8);
+    }
+  }
+  if (legacy.activeBoonId === 'cave-ember') {
+    state.cave = createCave(now, true);
+    state.cave.buildings['spirit-gathering-array'].level = 1;
+  }
+  return state;
 };
 
 const hasCompletedExploration = (state: GameState) =>
@@ -206,6 +247,7 @@ export const normalizeGameState = (input: GameState): GameState => {
   if (state.lifeStatus === 'dead') {
     state.character.currentAction = null;
   }
+  state.character.realm = normalizeRealm(input.character.realm);
   if (state.character.currentAction) {
     const action = state.character.currentAction;
     const cycleDurationMinutes = Number(action.cycleDurationMinutes);
@@ -269,6 +311,10 @@ export const normalizeGameState = (input: GameState): GameState => {
       ...initialCave.buildings,
       ...(cave.buildings ?? {}),
     },
+    mastery: {
+      ...initialCave.mastery,
+      ...(cave.mastery ?? {}),
+    },
   };
 
   for (const building of Object.values(state.cave.buildings)) {
@@ -276,6 +322,9 @@ export const normalizeGameState = (input: GameState): GameState => {
   }
   state.cave.stored.cultivation = Math.max(0, Number(state.cave.stored.cultivation) || 0);
   state.cave.stored.herbs = Math.max(0, Number(state.cave.stored.herbs) || 0);
+  state.cave.mastery.spiritMarrowRefinements = Math.max(0, Number(state.cave.mastery.spiritMarrowRefinements) || 0);
+  state.cave.mastery.yearsHerbRituals = Math.max(0, Math.min(3, Number(state.cave.mastery.yearsHerbRituals) || 0));
+  state.cave.mastery.mergedScriptDeductions = Math.max(0, Number(state.cave.mastery.mergedScriptDeductions) || 0);
   state.cave.lastSettledAt = Number(state.cave.lastSettledAt) || now;
 
   const initialPath = createCultivationPath();
@@ -288,20 +337,32 @@ export const normalizeGameState = (input: GameState): GameState => {
     ...initialPath,
     ...(legacyPath ?? {}),
     schoolId: validSchoolId,
+    auxiliaryTechniqueId: null,
     techniques: {
       ...initialPath.techniques,
       ...(legacyPath?.techniques ?? {}),
     },
   };
-  if (state.cultivationPath.schoolId) {
-    const schoolTechnique = getTechniqueForSchool(state.cultivationPath.schoolId);
-    if (schoolTechnique) {
-      state.cultivationPath.activeTechniqueId = schoolTechnique.id;
-      const existingProgress = state.cultivationPath.techniques[schoolTechnique.id];
-      state.cultivationPath.techniques[schoolTechnique.id] = existingProgress ?? createTechniqueProgress(schoolTechnique);
-    }
-  } else {
-    state.cultivationPath.activeTechniqueId = null;
+  const schoolTechnique = state.cultivationPath.schoolId
+    ? getTechniqueForSchool(state.cultivationPath.schoolId)
+    : null;
+  const savedActiveTechniqueId = legacyPath?.activeTechniqueId;
+  const activeTechniqueId = savedActiveTechniqueId && savedActiveTechniqueId in TECHNIQUE_DEFINITIONS
+    ? savedActiveTechniqueId as TechniqueId
+    : schoolTechnique?.id ?? null;
+  const savedAuxiliaryTechniqueId = legacyPath?.auxiliaryTechniqueId;
+  const auxiliaryTechniqueId = savedAuxiliaryTechniqueId &&
+    savedAuxiliaryTechniqueId in TECHNIQUE_DEFINITIONS &&
+    savedAuxiliaryTechniqueId !== activeTechniqueId
+    ? savedAuxiliaryTechniqueId as TechniqueId
+    : null;
+  state.cultivationPath.activeTechniqueId = activeTechniqueId;
+  state.cultivationPath.auxiliaryTechniqueId = auxiliaryTechniqueId;
+  if (activeTechniqueId) {
+    state.cultivationPath.techniques[activeTechniqueId] ??= createTechniqueProgress(TECHNIQUE_DEFINITIONS[activeTechniqueId]);
+  }
+  if (auxiliaryTechniqueId) {
+    state.cultivationPath.techniques[auxiliaryTechniqueId] ??= createTechniqueProgress(TECHNIQUE_DEFINITIONS[auxiliaryTechniqueId]);
   }
   for (const [techniqueId, progress] of Object.entries(state.cultivationPath.techniques)) {
     if (!(techniqueId in TECHNIQUE_DEFINITIONS)) {
@@ -438,10 +499,11 @@ export const startNextLife = (
   name: string,
   talentIds: string[],
   now = Date.now(),
+  boonId: LegacyBoonId | null = null,
 ): GameState => {
   const state = normalizeGameState(input);
   if (state.lifeStatus !== 'dead') return state;
-  return createNewGame(name, talentIds, state.legacy, state.pastLives, now);
+  return createNewGame(name, talentIds, { ...state.legacy, activeBoonId: boonId }, state.pastLives, now);
 };
 
 export const clearGame = () => {

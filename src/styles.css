@@ -16,6 +16,35 @@
   --shadow: 0 12px 36px rgba(75, 53, 30, 0.08);
 }
 
+.golden-core-card { display: flex; align-items: center; justify-content: space-between; gap: 28px; padding: 28px; border-color: rgba(151, 49, 43, .28); background: linear-gradient(135deg, rgba(180, 139, 63, .12), rgba(151, 49, 43, .07)), var(--paper); }
+.golden-core-card h3 { margin: 6px 0 10px; font-size: 24px; }
+.golden-core-card p { margin: 0; max-width: 720px; color: var(--muted); line-height: 1.75; }
+.golden-core-card small { display: block; margin-top: 10px; color: var(--red); }
+.golden-core-card button { flex: 0 0 auto; }
+.life-ending-banner { margin: 24px 0; padding: 20px 22px; border: 1px solid rgba(151, 49, 43, .24); background: rgba(151, 49, 43, .06); }
+.life-ending-banner span { display: block; color: var(--red); font-size: 12px; letter-spacing: .16em; }
+.life-ending-banner strong { display: block; margin-top: 7px; font-size: 24px; }
+.life-ending-banner p { margin: 8px 0 0; color: var(--muted); line-height: 1.7; }
+.legacy-boon-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 18px; }
+.legacy-boon-option { display: flex; gap: 10px; min-height: 150px; padding: 16px; text-align: left; border: 1px solid var(--line); background: rgba(255,255,255,.28); color: var(--ink); cursor: pointer; }
+.legacy-boon-option.selected { border-color: var(--red); box-shadow: inset 0 0 0 1px rgba(151,49,43,.18); background: rgba(151,49,43,.06); }
+.legacy-boon-option strong, .legacy-boon-option small, .legacy-boon-option em { display: block; }
+.legacy-boon-option small { margin-top: 7px; color: var(--muted); line-height: 1.55; }
+.legacy-boon-option em { margin-top: 10px; color: var(--red); font-size: 12px; font-style: normal; line-height: 1.5; }
+.cave-mastery-section { padding: 26px; }
+.cave-mastery-section > p { color: var(--muted); line-height: 1.75; }
+.cave-mastery-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 18px; }
+.cave-mastery-card { display: flex; flex-direction: column; gap: 9px; padding: 18px; border: 1px dashed var(--line); opacity: .7; }
+.cave-mastery-card.unlocked { border-style: solid; opacity: 1; background: rgba(180, 139, 63, .05); }
+.cave-mastery-card p { flex: 1; margin: 0; color: var(--muted); line-height: 1.65; }
+.cave-mastery-card small { color: var(--red); }
+
+@media (max-width: 650px) {
+  .golden-core-card { align-items: stretch; flex-direction: column; }
+  .legacy-boon-options, .cave-mastery-grid { grid-template-columns: 1fr; }
+  .legacy-boon-option { min-height: 0; }
+}
+
 * { box-sizing: border-box; }
 
 html, body, #root { height: 100%; }
@@ -239,6 +268,26 @@ button:disabled { cursor: not-allowed; }
 .technique-fragment-count, .technique-resource { color: var(--gold); font: 10px Arial, sans-serif; white-space: nowrap; padding-top: 4px; }
 .technique-resource { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 .technique-resource strong { color: var(--red); font: 22px Georgia, serif; }
+.technique-build-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px; }
+.technique-slot { min-width: 0; padding: 15px; border: 1px solid rgba(142,111,70,.18); background: rgba(248,242,232,.5); }
+.technique-slot.main-slot { border-color: rgba(159,67,53,.3); background: rgba(159,67,53,.055); }
+.technique-slot.auxiliary-slot { border-color: rgba(113,128,92,.34); background: rgba(113,128,92,.07); }
+.technique-slot.empty-slot { border-style: dashed; }
+.technique-slot small, .technique-combination small, .auxiliary-technique-card small { color: var(--gold); font: 9px Arial, sans-serif; letter-spacing: .08em; }
+.technique-slot strong, .auxiliary-technique-card strong { display: block; margin-top: 7px; font-size: 14px; font-weight: 600; }
+.technique-slot p, .technique-combination p, .auxiliary-technique-card p { color: var(--muted); font-size: 10px; line-height: 1.65; margin: 7px 0 0; }
+.technique-combination { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 14px 15px; margin-bottom: 12px; border: 1px solid rgba(142,111,70,.2); background: #f7f0e5; }
+.technique-combination.resonance { border-color: rgba(113,128,92,.42); background: #edf0e7; }
+.technique-combination.conflict { border-color: rgba(159,67,53,.42); background: #f7e9e4; }
+.technique-combination strong { display: block; margin-top: 5px; font-size: 13px; }
+.technique-combination p { max-width: 650px; }
+.technique-combination .secondary-button { flex: 0 0 auto; }
+.auxiliary-technique-picker { margin-bottom: 12px; padding: 15px; border: 1px dashed rgba(142,111,70,.28); background: rgba(248,242,232,.36); }
+.auxiliary-technique-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; margin-top: 12px; }
+.auxiliary-technique-card { display: flex; flex-direction: column; min-width: 0; padding: 13px; border: 1px solid rgba(142,111,70,.16); background: #fcf8f0; }
+.auxiliary-technique-card > span { color: var(--green); font-size: 9px; margin: 9px 0 12px; }
+.auxiliary-technique-card > span.conflict-copy { color: var(--red); }
+.auxiliary-technique-card .secondary-button { margin-top: auto; }
 .school-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 9px; }
 .school-card { display: flex; flex-direction: column; min-width: 0; padding: 14px; background: rgba(248,242,232,.42); border: 1px solid rgba(142,111,70,.16); }
 .school-card-top { display: flex; align-items: center; gap: 9px; }
@@ -564,7 +613,8 @@ button:disabled { cursor: not-allowed; }
   .practice-plan { align-items: flex-start; flex-direction: column; }
   .practice-plan-options { display: grid; grid-template-columns: repeat(4, 1fr); width: 100%; }
   .practice-plan-options button { min-width: 0; }
-  .school-grid, .technique-branch-grid { grid-template-columns: 1fr; }
+  .school-grid, .technique-branch-grid, .technique-build-grid, .auxiliary-technique-grid { grid-template-columns: 1fr; }
+  .technique-combination { align-items: stretch; flex-direction: column; }
   .event-choice-grid, .relationship-grid, .sect-grid, .mission-grid, .exchange-grid { grid-template-columns: 1fr; }
   .codex-overview, .codex-section-heading { flex-direction: column; gap: 9px; }
   .codex-overview-stat, .codex-section-heading > span { align-items: flex-start; }

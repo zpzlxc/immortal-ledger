@@ -112,12 +112,28 @@ export const ACTIONS: Record<
     description: '前往筑基修士才能踏入的试炼场，寻找更高阶的功法残页与灵石。',
     risk: '风险：耗时较长，收获更丰厚',
   },
+  technique_swap: {
+    label: '调息转修',
+    icon: '易',
+    durationMinutes: 30,
+    description: '收束当前周天，交换主修与辅修的位置，让另一门功法接管经脉运转。',
+    risk: '风险：不消耗资源，但转修期间不能安排其他行动',
+  },
+  golden_core_ordeal: {
+    label: '叩问金丹',
+    icon: '丹',
+    durationMinutes: 60,
+    description: '以这一世的功法、因果与人间牵挂叩问金丹，写下本世真正的终章。',
+    risk: '终局：行动完成后本世结束，并形成可继承的道途结局',
+  },
 };
 
 export const REAL_MINUTE_TO_GAME_DAYS = 0.5;
 export const MAX_OFFLINE_MINUTES = 8 * 60;
 export const BREAKTHROUGH_COST_SPIRIT_STONES = 10;
 export const BREAKTHROUGH_FAILURE_COOLDOWN_MINUTES = 60;
+export const AUXILIARY_TECHNIQUE_COST = 4;
+export const GOLDEN_CORE_ORDEAL_COST = { spiritStones: 80, herbs: 12, techniqueFragments: 6 } as const;
 export const SECT_DEFECTION_COOLDOWN_MINUTES = 120;
 export const SAVE_KEY = 'immortal-ledger-save-v1';
 

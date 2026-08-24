@@ -1,10 +1,11 @@
-import { MAX_OFFLINE_MINUTES } from './content';
+import { getOfflineLimitMinutes } from './cave';
 import type { ActionType, GameState } from './types';
 
 const MINUTE_MS = 60_000;
 
 export type OfflineSummary = {
   elapsedMinutes: number;
+  limitMinutes: number;
   capped: boolean;
   completedAction: ActionType | null;
   resourceChanges: {
@@ -44,9 +45,11 @@ export const getOfflineSummary = (
     return null;
   }
 
-  const cappedElapsedMs = Math.min(elapsedMs, MAX_OFFLINE_MINUTES * MINUTE_MS);
+  const limitMinutes = getOfflineLimitMinutes(before);
+  const cappedElapsedMs = Math.min(elapsedMs, limitMinutes * MINUTE_MS);
   return {
     elapsedMinutes: Math.max(1, Math.floor(cappedElapsedMs / MINUTE_MS)),
+    limitMinutes,
     capped: elapsedMs > cappedElapsedMs,
     completedAction,
     resourceChanges: {

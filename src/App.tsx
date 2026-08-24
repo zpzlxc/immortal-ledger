@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import {
   ACTIONS,
+  AUXILIARY_TECHNIQUE_COST,
   BREAKTHROUGH_COST_SPIRIT_STONES,
+  GOLDEN_CORE_ORDEAL_COST,
   PRACTICE_PLAN_OPTIONS,
   formatAge,
   formatRealm,
@@ -14,10 +16,13 @@ import {
   CAVE_MAX_LEVEL,
   getActionDurationMinutes,
   getCaveEffects,
+  getOfflineLimitMinutes,
   getUpgradeCost,
 } from './game/cave';
+import { CAVE_MASTERY_DEFINITIONS } from './game/caveActions';
 import { EXPLORATION_EVENTS, EXPLORATION_LOCATIONS, getExplorationEvent, getWorldCycle } from './game/exploration';
 import { getInjuryLabel, getInjurySourceLabel } from './game/injury';
+import { LEGACY_BOONS, LIFE_ENDINGS } from './game/legacy';
 import { getOfflineSummary, type OfflineSummary } from './game/offline';
 import {
   getPersonEvent,
@@ -36,22 +41,27 @@ import {
   CULTIVATION_SCHOOLS,
   TECHNIQUE_DEFINITIONS,
   getActiveTechnique,
+  getAuxiliaryTechnique,
+  getTechniqueCombination,
   getTechniqueProgress,
 } from './game/techniques';
 import type { TechniqueDefinition } from './game/techniques';
 import type {
   ActionType,
   CaveBuildingId,
+  CaveMasteryId,
   CultivationSchoolId,
   ExplorationLocationId,
   GameState,
   LedgerEntry,
+  LegacyBoonId,
   LegacyState,
   LifeSummary,
   SectId,
   SectExchangeId,
   SectMissionId,
   Talent,
+  TechniqueId,
 } from './game/types';
 import {
   clearGame,
@@ -64,19 +74,24 @@ import {
 } from './game/save';
 import {
   collectCave,
+  performCaveMastery,
   craftHealingPill,
   chooseCultivationSchool,
   defectSect,
   exchangeSectReputation,
+  getActionStartError,
   getBreakthroughStartError,
   joinSect,
+  learnAuxiliaryTechnique,
   promoteSectPosition,
   researchTechniqueBranch,
   resolveExplorationEvent,
   resolvePersonEvent,
   settleGame,
   startBreakthrough,
+  startGoldenCoreOrdeal,
   startSectMission,
+  startTechniqueSwap,
   startAction,
   treatInjury,
   upgradeCaveBuilding,
@@ -115,6 +130,7 @@ const getNextStepSuggestion = (state: GameState) => {
   if (state.social.pendingPersonEvent) return '人物事件正在等你回应，先去人物页落下这一笔。';
   if (state.pendingExplorationEvent) return '探索带回了一道岔路，先去探索页选择你要留下的方向。';
   if (state.character.currentAction) return `「${ACTIONS[state.character.currentAction.type].label}」仍在进行，等它完成后再安排下一步。`;
+  if (state.character.realm.major === 'foundation_establishment' && state.character.realm.stage >= 4) return '筑基已经圆满。备齐终局资源后，可以在修炼页叩问金丹，为这一世写下结局。';
   if (state.character.realm.major === 'foundation_establishment') return '筑基之后，修炼页已经出现新的筑基试炼，可以去云外峰场寻找更高阶的机缘。';
   if (state.cave.stored.cultivation > 0 || state.cave.stored.herbs > 0) return '洞府里还有待收产出，可以先去洞府收好这一笔家底。';
   if (state.character.realm.cultivation >= state.character.realm.cultivationRequired) return '修为已经触及瓶颈，可以先夯实根基，再决定是否尝试突破。';
@@ -134,9 +150,9 @@ const PRACTICE_PLAN_KEY = 'immortal-ledger-practice-plan-minutes';
 
 const loadPracticePlanMinutes = () => {
   const stored = window.localStorage.getItem(PRACTICE_PLAN_KEY);
-  if (stored === null) return 4 * 60;
+  if (stored === null) return 0;
   const saved = Number(stored);
-  return PRACTICE_PLAN_OPTIONS.some((option) => option.minutes === saved) ? saved : 4 * 60;
+  return PRACTICE_PLAN_OPTIONS.some((option) => option.minutes === saved) ? saved : 0;
 };
 
 const App = () => {
@@ -206,9 +222,9 @@ const App = () => {
     setOfflineSummary(null);
   };
 
-  const handleNextLife = (name: string, talent: Talent) => {
+  const handleNextLife = (name: string, talent: Talent, boonId: LegacyBoonId) => {
     if (!game || game.lifeStatus !== 'dead') return;
-    const next = startNextLife(game, name, [talent.id], Date.now());
+    const next = startNextLife(game, name, [talent.id], Date.now(), boonId);
     saveGame(next);
     setGame(next);
     setOfflineSummary(null);
@@ -260,6 +276,20 @@ const App = () => {
     }
   };
 
+  const handleGoldenCoreOrdeal = () => {
+    if (!game) return;
+    const settledAt = Date.now();
+    const settled = settleGame(game, settledAt);
+    captureOfflineSummary(game, settled.state, settledAt);
+    const result = startGoldenCoreOrdeal(settled.state, settledAt);
+    saveGame(result.state);
+    setGame(result.state);
+    setErrorMessage(result.error ?? '');
+    if (settled.newEntries.length > 0 || result.newEntries.length > 0) {
+      setNotice([...settled.newEntries, ...result.newEntries]);
+    }
+  };
+
   const handleChooseSchool = (schoolId: CultivationSchoolId) => {
     if (!game) return;
     const result = chooseCultivationSchool(game, schoolId, Date.now());
@@ -276,6 +306,29 @@ const App = () => {
     setGame(result.state);
     setErrorMessage(result.error ?? '');
     if (result.newEntries.length > 0) setNotice(result.newEntries);
+  };
+
+  const handleLearnAuxiliaryTechnique = (techniqueId: TechniqueId) => {
+    if (!game) return;
+    const result = learnAuxiliaryTechnique(game, techniqueId, Date.now());
+    saveGame(result.state);
+    setGame(result.state);
+    setErrorMessage(result.error ?? '');
+    if (result.newEntries.length > 0) setNotice(result.newEntries);
+  };
+
+  const handleTechniqueSwap = () => {
+    if (!game) return;
+    const settledAt = Date.now();
+    const settled = settleGame(game, settledAt);
+    captureOfflineSummary(game, settled.state, settledAt);
+    const result = startTechniqueSwap(settled.state, settledAt);
+    saveGame(result.state);
+    setGame(result.state);
+    setErrorMessage(result.error ?? '');
+    if (settled.newEntries.length > 0 || result.newEntries.length > 0) {
+      setNotice([...settled.newEntries, ...result.newEntries]);
+    }
   };
 
   const handleResolvePersonEvent = (choiceId: string) => {
@@ -396,6 +449,15 @@ const App = () => {
     if (result.newEntries.length > 0) setNotice(result.newEntries);
   };
 
+  const handleCaveMastery = (masteryId: CaveMasteryId) => {
+    if (!game) return;
+    const result = performCaveMastery(game, masteryId, Date.now());
+    saveGame(result.state);
+    setGame(result.state);
+    setErrorMessage(result.error ?? '');
+    if (result.newEntries.length > 0) setNotice(result.newEntries);
+  };
+
   const markRead = (entryId: string) => {
     setGame((previous) => {
       if (!previous) return previous;
@@ -464,6 +526,10 @@ const App = () => {
   );
   const canBreakthrough = game.character.realm.cultivation >= game.character.realm.cultivationRequired;
   const breakthroughError = canBreakthrough ? getBreakthroughStartError(game, now) : null;
+  const goldenCoreReady = game.character.realm.major === 'foundation_establishment' && game.character.realm.stage >= 4;
+  const goldenCoreError = goldenCoreReady
+    ? getActionStartError(game, 'golden_core_ordeal', 'qingstone-mountain', undefined, now)
+    : null;
   const pendingLedgerEvent = game.social.pendingPersonEvent
     ? (() => {
       const event = getPersonEvent(game.social.pendingPersonEvent!.eventId);
@@ -632,10 +698,13 @@ const App = () => {
               cultivationPath={game.cultivationPath}
               canBreakthrough={canBreakthrough}
               breakthroughError={breakthroughError}
+              goldenCoreReady={goldenCoreReady}
+              goldenCoreError={goldenCoreError}
               onStart={handleStartAction}
               practicePlanMinutes={practicePlanMinutes}
               onPracticePlanChange={handlePracticePlanChange}
               onBreakthrough={handleBreakthrough}
+              onGoldenCoreOrdeal={handleGoldenCoreOrdeal}
             />
           )}
           {activeTab === 'technique' && (
@@ -645,8 +714,11 @@ const App = () => {
               cave={game.cave}
               sectId={game.social.sect.sectId}
               inventory={game.inventory}
+              realm={game.character.realm}
               cultivationPath={game.cultivationPath}
               onChooseSchool={handleChooseSchool}
+              onLearnAuxiliaryTechnique={handleLearnAuxiliaryTechnique}
+              onTechniqueSwap={handleTechniqueSwap}
               onResearchBranch={handleResearchBranch}
               onStart={handleStartAction}
               practicePlanMinutes={practicePlanMinutes}
@@ -674,10 +746,12 @@ const App = () => {
               inventory={game.inventory}
               sectId={game.social.sect.sectId}
               injury={game.character.injury}
+              offlineLimitMinutes={getOfflineLimitMinutes(game)}
               onCollect={handleCollectCave}
               onTreat={handleTreatInjury}
               onCraftPill={handleCraftHealingPill}
               onUpgrade={handleUpgradeCaveBuilding}
+              onMastery={handleCaveMastery}
             />
           )}
           {activeTab === 'people' && (
@@ -754,17 +828,18 @@ const CreateCharacter = ({ onCreate }: { onCreate: (name: string, talent: Talent
 const deathReasonLabel = (reason: LifeSummary['deathReason']) => {
   if (reason === 'lifespan_exhausted') return '寿元耗尽';
   if (reason === 'fatal_injury') return '重伤不治';
-  return '本世终结';
+  return '叩问金丹';
 };
 
 const LifeEndView = ({ summary, legacy, onCreate }: {
   summary: LifeSummary;
   legacy: LegacyState;
-  onCreate: (name: string, talent: Talent) => void;
+  onCreate: (name: string, talent: Talent, boonId: LegacyBoonId) => void;
 }) => {
   const [name, setName] = useState(`${summary.characterName}·续`);
   const [talentOptions] = useState(() => shuffle(TALENTS).slice(0, 3));
   const [selectedTalentId, setSelectedTalentId] = useState(talentOptions[0].id);
+  const [selectedBoonId, setSelectedBoonId] = useState<LegacyBoonId>('old-friend-echo');
   const selectedTalent = talentOptions.find((talent) => talent.id === selectedTalentId) ?? talentOptions[0];
 
   return (
@@ -774,6 +849,12 @@ const LifeEndView = ({ summary, legacy, onCreate }: {
         <div className="eyebrow">THE LAST PAGE · 本世终章</div>
         <h1>{summary.characterName} 的一世已尽</h1>
         <p className="intro-copy">{deathReasonLabel(summary.deathReason)}。这一页已经合上，但你走过的路没有消失，它们会成为下一世仍然存在的微光。</p>
+
+        <div className="life-ending-banner">
+          <span>本世结局</span>
+          <strong>{LIFE_ENDINGS[summary.endingId].label}</strong>
+          <p>{LIFE_ENDINGS[summary.endingId].summary}</p>
+        </div>
 
         <div className="life-summary-grid">
           <div><span>本世</span><strong>第 {summary.lifeNumber} 世</strong></div>
@@ -825,7 +906,20 @@ const LifeEndView = ({ summary, legacy, onCreate }: {
           ))}
         </div>
         <div className="selected-effect">天赋：{selectedTalent.effect}</div>
-        <button className="primary-button begin-button" onClick={() => onCreate(name, selectedTalent)}>
+        <div className="field-label talent-label">选择一项前世遗泽</div>
+        <div className="legacy-boon-options">
+          {(Object.entries(LEGACY_BOONS) as Array<[LegacyBoonId, (typeof LEGACY_BOONS)[LegacyBoonId]]>).map(([boonId, boon]) => (
+            <button
+              key={boonId}
+              className={`legacy-boon-option ${selectedBoonId === boonId ? 'selected' : ''}`}
+              onClick={() => setSelectedBoonId(boonId)}
+            >
+              <span className="option-radio">{selectedBoonId === boonId ? '●' : '○'}</span>
+              <span><strong>{boon.label}</strong><small>{boon.summary}</small><em>{boon.effect}</em></span>
+            </button>
+          ))}
+        </div>
+        <button className="primary-button begin-button" onClick={() => onCreate(name, selectedTalent, selectedBoonId)}>
           翻开下一页 <span>→</span>
         </button>
       </section>
@@ -983,7 +1077,7 @@ const OfflineSummaryCard = ({ summary, nextStepSuggestion, onDismiss }: {
             <div className="eyebrow">BACK FROM THE ROAD · 离线回报</div>
             <h3>你离开期间，长生簿替你记下了这些。</h3>
           </div>
-          {summary.capped && <span className="offline-summary-cap">按 8 小时上限结算</span>}
+          {summary.capped && <span className="offline-summary-cap">按 {formatOfflineDuration(summary.limitMinutes)}上限结算</span>}
         </div>
         <div className="offline-summary-grid">
           <div><span>离线时长</span><strong>{formatOfflineDuration(summary.elapsedMinutes)}</strong></div>
@@ -1167,7 +1261,7 @@ const CultivationPulse = ({ attributes, injury, cultivationPath, currentAction, 
   );
 };
 
-const CultivationView = ({ currentAction, now, cave, sectId, attributes, realm, injury, cultivationPath, canBreakthrough, breakthroughError, practicePlanMinutes, onPracticePlanChange, onStart, onBreakthrough }: {
+const CultivationView = ({ currentAction, now, cave, sectId, attributes, realm, injury, cultivationPath, canBreakthrough, breakthroughError, goldenCoreReady, goldenCoreError, practicePlanMinutes, onPracticePlanChange, onStart, onBreakthrough, onGoldenCoreOrdeal }: {
   currentAction: GameState['character']['currentAction'];
   now: number;
   cave: GameState['cave'];
@@ -1178,10 +1272,13 @@ const CultivationView = ({ currentAction, now, cave, sectId, attributes, realm, 
   cultivationPath: GameState['cultivationPath'];
   canBreakthrough: boolean;
   breakthroughError: string | null;
+  goldenCoreReady: boolean;
+  goldenCoreError: string | null;
   practicePlanMinutes: number;
   onPracticePlanChange: (minutes: number) => void;
   onStart: (type: ActionType, locationId?: ExplorationLocationId, plannedMinutes?: number) => void;
   onBreakthrough: () => void;
+  onGoldenCoreOrdeal: () => void;
 }) => (
   <div className="view-stack">
     <section className="page-heading">
@@ -1191,10 +1288,23 @@ const CultivationView = ({ currentAction, now, cave, sectId, attributes, realm, 
     <CultivationPulse attributes={attributes} injury={injury} cultivationPath={cultivationPath} currentAction={currentAction} canBreakthrough={canBreakthrough} />
     {currentAction && <CurrentActionCard action={currentAction} now={now} />}
     <PracticePlanSelector value={practicePlanMinutes} disabled={Boolean(currentAction)} onChange={onPracticePlanChange} />
-    {canBreakthrough && (
+    {canBreakthrough && !goldenCoreReady && (
       <section className="breakthrough-card">
         <div><span className="eyebrow">A GATE AWAITS · 关隘已至</span><h3>你的修为已经触及当前瓶颈。</h3><p>准备突破需耗时 {ACTIONS.breakthrough.durationMinutes} 分钟，消耗 {BREAKTHROUGH_COST_SPIRIT_STONES} 枚灵石。{breakthroughError ?? '准备完成后才会真正叩击关隘，失败会进入冷却。'}</p></div>
         <button className="primary-button" disabled={Boolean(breakthroughError)} onClick={onBreakthrough}>{breakthroughError ? '暂不可突破' : '开始准备突破'}</button>
+      </section>
+    )}
+    {goldenCoreReady && (
+      <section className="golden-core-card paper-card">
+        <div>
+          <span className="eyebrow">THE LAST QUESTION · 金丹终问</span>
+          <h3>筑基圆满，这一世已经可以写下结局。</h3>
+          <p>完成三次筑基试炼并备齐灵石 {GOLDEN_CORE_ORDEAL_COST.spiritStones}、灵草 {GOLDEN_CORE_ORDEAL_COST.herbs}、功法残页 {GOLDEN_CORE_ORDEAL_COST.techniqueFragments}，即可用功法、宗门与因果凝成属于本世的金丹结局。行动完成后本世将结束。</p>
+          {goldenCoreError && <small>{goldenCoreError}</small>}
+        </div>
+        <button className="primary-button" disabled={Boolean(goldenCoreError) || Boolean(currentAction)} onClick={onGoldenCoreOrdeal}>
+          {currentAction ? '行动中' : goldenCoreError ? '尚未具足' : '叩问金丹 · 60 分钟'}
+        </button>
       </section>
     )}
     {realm.major === 'foundation_establishment' && (
@@ -1223,16 +1333,19 @@ const CultivationView = ({ currentAction, now, cave, sectId, attributes, realm, 
   </div>
 );
 
-const TechniqueView = ({ currentAction, now, cave, sectId, inventory, cultivationPath, practicePlanMinutes, onPracticePlanChange, onChooseSchool, onResearchBranch, onStart }: {
+const TechniqueView = ({ currentAction, now, cave, sectId, inventory, realm, cultivationPath, practicePlanMinutes, onPracticePlanChange, onChooseSchool, onLearnAuxiliaryTechnique, onTechniqueSwap, onResearchBranch, onStart }: {
   currentAction: GameState['character']['currentAction'];
   now: number;
   cave: GameState['cave'];
   sectId: SectId | null;
   inventory: GameState['inventory'];
+  realm: GameState['character']['realm'];
   cultivationPath: GameState['cultivationPath'];
   practicePlanMinutes: number;
   onPracticePlanChange: (minutes: number) => void;
   onChooseSchool: (schoolId: CultivationSchoolId) => void;
+  onLearnAuxiliaryTechnique: (techniqueId: TechniqueId) => void;
+  onTechniqueSwap: () => void;
   onResearchBranch: (branchId: string) => void;
   onStart: (type: ActionType, locationId?: ExplorationLocationId, plannedMinutes?: number) => void;
 }) => (
@@ -1246,7 +1359,11 @@ const TechniqueView = ({ currentAction, now, cave, sectId, inventory, cultivatio
     <TechniquePathPanel
       cultivationPath={cultivationPath}
       inventory={inventory}
+      realm={realm}
+      currentAction={currentAction}
       onChooseSchool={onChooseSchool}
+      onLearnAuxiliaryTechnique={onLearnAuxiliaryTechnique}
+      onTechniqueSwap={onTechniqueSwap}
       onResearchBranch={onResearchBranch}
     />
     <section className="technique-study-card paper-card">
@@ -1330,14 +1447,20 @@ const formatTechniqueEffects = (effects: TechniqueDefinition['branches'][number]
   return labels.length > 0 ? labels.join(' · ') : '效果：稳住根基';
 };
 
-const TechniquePathPanel = ({ cultivationPath, inventory, onChooseSchool, onResearchBranch }: {
+const TechniquePathPanel = ({ cultivationPath, inventory, realm, currentAction, onChooseSchool, onLearnAuxiliaryTechnique, onTechniqueSwap, onResearchBranch }: {
   cultivationPath: GameState['cultivationPath'];
   inventory: GameState['inventory'];
+  realm: GameState['character']['realm'];
+  currentAction: GameState['character']['currentAction'];
   onChooseSchool: (schoolId: CultivationSchoolId) => void;
+  onLearnAuxiliaryTechnique: (techniqueId: TechniqueId) => void;
+  onTechniqueSwap: () => void;
   onResearchBranch: (branchId: string) => void;
 }) => {
   const school = cultivationPath.schoolId ? CULTIVATION_SCHOOLS[cultivationPath.schoolId] : null;
   const technique = getActiveTechnique(cultivationPath);
+  const auxiliaryTechnique = getAuxiliaryTechnique(cultivationPath);
+  const combination = getTechniqueCombination(cultivationPath);
   const progress = getTechniqueProgress(cultivationPath);
 
   if (!school || !technique || !progress) {
@@ -1370,11 +1493,46 @@ const TechniquePathPanel = ({ cultivationPath, inventory, onChooseSchool, onRese
       <div className="technique-panel-heading">
         <div>
           <div className="eyebrow">THE PATH YOU CHOSE · 功法流派</div>
-          <h3>{school.label} · {technique.name}</h3>
+          <h3>本命 {school.label} · 主修 {technique.name}</h3>
           <p>{technique.grade} · {technique.summary}</p>
         </div>
         <div className="technique-resource"><span>功法残页</span><strong>{inventory.techniqueFragments}</strong></div>
       </div>
+      <div className="technique-build-grid">
+        <article className="technique-slot main-slot">
+          <small>主修功法 · 分支完整生效</small>
+          <strong>{technique.name}</strong>
+          <p>{technique.branches.find((branch) => branch.id === progress.activeBranchId)?.label ?? '入门分支'}正在接管周天运转；研读与参悟会提升这门功法的熟练度。</p>
+        </article>
+        <article className={`technique-slot ${auxiliaryTechnique ? 'auxiliary-slot' : 'empty-slot'}`}>
+          <small>辅修功法 · 仅启用专属被动</small>
+          <strong>{auxiliaryTechnique?.name ?? (realm.major === 'foundation_establishment' ? '等待第二门功法' : '筑基后解锁')}</strong>
+          <p>{auxiliaryTechnique ? `${auxiliaryTechnique.auxiliaryEffectLabel}：${formatTechniqueEffects(auxiliaryTechnique.auxiliaryEffects)}` : realm.major === 'foundation_establishment' ? `消耗 ${AUXILIARY_TECHNIQUE_COST} 页残页研习另一门功法。` : '炼气经脉尚不足以同时承载两道周天。'}</p>
+        </article>
+      </div>
+      {auxiliaryTechnique ? (
+        <div className={`technique-combination ${combination?.kind === 'conflict' ? 'conflict' : combination ? 'resonance' : ''}`}>
+          <div><small>{combination?.kind === 'conflict' ? '功法冲突' : combination ? '功法联动' : '功法组合'}</small><strong>{combination?.label ?? '平稳并行'}</strong><p>{combination?.summary ?? '两门功法暂时没有额外联动，也不会彼此冲突。主辅效果仍会各自生效。'}</p></div>
+          <button className="secondary-button" disabled={Boolean(currentAction)} onClick={onTechniqueSwap}>调息转修 · 30 分钟</button>
+        </div>
+      ) : realm.major === 'foundation_establishment' ? (
+        <div className="auxiliary-technique-picker">
+          <div className="section-intro"><div><span className="eyebrow">A SECOND BREATH · 辅修入门</span><h3>选择第二门功法</h3></div><span>本世仅可选择一门辅修</span></div>
+          <div className="auxiliary-technique-grid">
+            {Object.values(TECHNIQUE_DEFINITIONS).filter((candidate) => candidate.id !== technique.id).map((candidate) => {
+              const previewPath = { ...cultivationPath, auxiliaryTechniqueId: candidate.id };
+              const previewCombination = getTechniqueCombination(previewPath);
+              return <article className="auxiliary-technique-card" key={candidate.id}>
+                <small>{CULTIVATION_SCHOOLS[candidate.schoolId].label} · {candidate.grade}</small>
+                <strong>{candidate.name}</strong>
+                <p>{candidate.auxiliaryEffectLabel}：{formatTechniqueEffects(candidate.auxiliaryEffects)}</p>
+                <span className={previewCombination?.kind === 'conflict' ? 'conflict-copy' : ''}>{previewCombination ? `${previewCombination.kind === 'conflict' ? '冲突' : '联动'}：${previewCombination.label}` : '组合：平稳并行'}</span>
+                <button className="secondary-button" disabled={Boolean(currentAction) || inventory.techniqueFragments < AUXILIARY_TECHNIQUE_COST} onClick={() => onLearnAuxiliaryTechnique(candidate.id)}>消耗 {AUXILIARY_TECHNIQUE_COST} 页残页</button>
+              </article>;
+            })}
+          </div>
+        </div>
+      ) : null}
       <div className="technique-proficiency">
         <div className="progress-label"><span>功法熟练度</span><strong>{progress.proficiency} / 100</strong></div>
         <div className="progress-track technique-progress-track"><div style={{ width: `${progress.proficiency}%` }} /></div>
@@ -1386,7 +1544,7 @@ const TechniquePathPanel = ({ cultivationPath, inventory, onChooseSchool, onRese
           const active = progress.activeBranchId === branch.id;
           const meetsProficiency = progress.proficiency >= branch.requiredProficiency;
           const canAfford = inventory.techniqueFragments >= branch.costTechniqueFragments;
-          const disabled = active || (!unlocked && (!meetsProficiency || !canAfford));
+          const disabled = Boolean(currentAction) || active || (!unlocked && (!meetsProficiency || !canAfford));
           const buttonLabel = active
             ? '当前修习'
             : unlocked
@@ -1601,15 +1759,17 @@ const PeopleView = ({ social, now, currentAction, onResolveEvent, onJoinSect, on
   );
 };
 
-const CaveView = ({ cave, inventory, sectId, injury, onCollect, onTreat, onCraftPill, onUpgrade }: {
+const CaveView = ({ cave, inventory, sectId, injury, offlineLimitMinutes, onCollect, onTreat, onCraftPill, onUpgrade, onMastery }: {
   cave: GameState['cave'];
   inventory: GameState['inventory'];
   sectId: SectId | null;
   injury: GameState['character']['injury'];
+  offlineLimitMinutes: number;
   onCollect: () => void;
   onTreat: (treatment: 'herbs' | 'pill') => void;
   onCraftPill: () => void;
   onUpgrade: (buildingId: CaveBuildingId) => void;
+  onMastery: (masteryId: CaveMasteryId) => void;
 }) => {
   if (!cave.unlocked) {
     return (
@@ -1630,7 +1790,7 @@ const CaveView = ({ cave, inventory, sectId, injury, onCollect, onTreat, onCraft
         <div>
           <div className="eyebrow">OFFLINE PRODUCTION · 离线产出</div>
           <h3>洞府储藏</h3>
-          <p>你离开后，已建成的设施会继续运转；最多结算 8 小时的离线产出。</p>
+          <p>你离开后，已建成的设施会继续运转；当前最多结算 {formatOfflineDuration(offlineLimitMinutes)}的离线产出。</p>
         </div>
         <div className="cave-stored-grid">
           <div><span>待收修为</span><strong>{cave.stored.cultivation}</strong></div>
@@ -1688,6 +1848,35 @@ const CaveView = ({ cave, inventory, sectId, injury, onCollect, onTreat, onCraft
           );
         })}
       </div>
+      <section className="cave-mastery-section paper-card">
+        <div className="section-intro">
+          <div><span className="eyebrow">AFTER THE THIRD LEVEL · 满级秘用</span><h3>洞府深层劳作</h3></div>
+          <span>三级建筑开放</span>
+        </div>
+        <p>建筑达到三级后不再只是停产等待。你可以持续投入后期资源，换取修为、寿元或主辅功法推演；三座建筑全部满级时，离线上限额外增加 4 小时。</p>
+        <div className="cave-mastery-grid">
+          {(Object.entries(CAVE_MASTERY_DEFINITIONS) as Array<[CaveMasteryId, (typeof CAVE_MASTERY_DEFINITIONS)[CaveMasteryId]]>).map(([masteryId, mastery]) => {
+            const unlocked = cave.buildings[mastery.buildingId].level >= 3;
+            const exhausted = masteryId === 'years-herb' && cave.mastery.yearsHerbRituals >= 3;
+            const affordable = inventory.spiritStones >= mastery.cost.spiritStones && inventory.herbs >= mastery.cost.herbs && inventory.techniqueFragments >= mastery.cost.techniqueFragments;
+            const cost = [
+              mastery.cost.spiritStones ? `灵石 ${mastery.cost.spiritStones}` : '',
+              mastery.cost.herbs ? `灵草 ${mastery.cost.herbs}` : '',
+              mastery.cost.techniqueFragments ? `残页 ${mastery.cost.techniqueFragments}` : '',
+            ].filter(Boolean).join(' · ');
+            return (
+              <article className={`cave-mastery-card ${unlocked ? 'unlocked' : ''}`} key={masteryId}>
+                <strong>{mastery.label}</strong>
+                <p>{mastery.summary}</p>
+                <small>{unlocked ? cost : '对应建筑尚未达到三级'}</small>
+                <button className="secondary-button" disabled={!unlocked || exhausted || !affordable} onClick={() => onMastery(masteryId)}>
+                  {exhausted ? '本世已达上限' : unlocked ? '主持劳作' : '尚未开放'}
+                </button>
+              </article>
+            );
+          })}
+        </div>
+      </section>
     </div>
   );
 };
@@ -1790,8 +1979,8 @@ const CodexView = ({ game }: { game: GameState }) => {
       </section>
 
       <section className="codex-summary-grid">
-        <article className="codex-summary-card paper-card"><div className="eyebrow">THE ENDING OF THIS LIFE · 本世结局</div><h3>{game.lifeSummary ? game.lifeSummary.characterName : game.character.name}</h3><p>{game.lifeSummary ? `第${game.lifeSummary.lifeNumber}世 · ${formatRealm(game.lifeSummary.realm.major, game.lifeSummary.realm.stage)} · 走过 ${game.lifeSummary.discoveredLocationCount} 处地点。` : '这一世还没有写到最后一页。寿元、选择和关系，仍在继续改变结局。'}</p>{game.lifeSummary ? <small>{game.lifeSummary.keyEvents.slice(0, 4).join(' · ') || '没有留下额外关键事件'}</small> : <span className="discovered-mark">进行中</span>}</article>
-        <article className="codex-summary-card paper-card"><div className="eyebrow">RELICS BETWEEN LIVES · 轮回遗泽</div><h3>前世留下的微光</h3><p>历世 {game.legacy.lifeCount} 世 · 已继承地点 {game.legacy.discoveredLocations.length} 处 · 遗留功法残页 {game.legacy.techniqueFragments} 页。</p><small>{game.legacy.previousLifeNames.length > 0 ? `曾用名：${game.legacy.previousLifeNames.slice(-3).join('、')}` : '还没有前世姓名记录'}</small></article>
+        <article className="codex-summary-card paper-card"><div className="eyebrow">THE ENDING OF THIS LIFE · 本世结局</div><h3>{game.lifeSummary ? LIFE_ENDINGS[game.lifeSummary.endingId].label : game.character.name}</h3><p>{game.lifeSummary ? `第${game.lifeSummary.lifeNumber}世 · ${formatRealm(game.lifeSummary.realm.major, game.lifeSummary.realm.stage)} · 走过 ${game.lifeSummary.discoveredLocationCount} 处地点。` : '这一世还没有写到最后一页。寿元、选择和关系，仍在继续改变结局。'}</p>{game.lifeSummary ? <small>{LIFE_ENDINGS[game.lifeSummary.endingId].summary}</small> : <span className="discovered-mark">进行中</span>}</article>
+        <article className="codex-summary-card paper-card"><div className="eyebrow">RELICS BETWEEN LIVES · 轮回遗泽</div><h3>{game.legacy.activeBoonId ? LEGACY_BOONS[game.legacy.activeBoonId].label : '前世留下的微光'}</h3><p>历世 {game.legacy.lifeCount} 世 · 已继承地点 {game.legacy.discoveredLocations.length} 处 · 遗留功法残页 {game.legacy.techniqueFragments} 页。</p><small>{game.legacy.activeBoonId ? LEGACY_BOONS[game.legacy.activeBoonId].effect : game.legacy.previousLifeNames.length > 0 ? `曾用名：${game.legacy.previousLifeNames.slice(-3).join('、')}` : '还没有前世姓名记录'}</small></article>
       </section>
     </div>
   );

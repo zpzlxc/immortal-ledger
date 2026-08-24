@@ -1,8 +1,9 @@
 import {
   ACTIONS,
+  AUXILIARY_TECHNIQUE_COST,
   BREAKTHROUGH_COST_SPIRIT_STONES,
   BREAKTHROUGH_FAILURE_COOLDOWN_MINUTES,
-  MAX_OFFLINE_MINUTES,
+  GOLDEN_CORE_ORDEAL_COST,
   REAL_MINUTE_TO_GAME_DAYS,
   getRealmStageCap,
   isContinuousAction,
@@ -12,6 +13,7 @@ import {
   createCave,
   getActionDurationMinutes,
   getCaveEffects,
+  getOfflineLimitMinutes,
   settleCave,
 } from './cave';
 import {
@@ -40,12 +42,15 @@ import {
   SECTS,
   SECT_POSITIONS,
 } from './people';
+import { getGoldenCoreEnding, LIFE_ENDINGS } from './legacy';
 import { createLedgerEntry } from './save';
 import {
   CULTIVATION_SCHOOLS,
   createCultivationPath,
   createTechniqueProgress,
   getActiveTechnique,
+  getAuxiliaryTechnique,
+  getTechniqueCombination,
   getTechniqueEffects,
   getTechniqueForSchool,
   getTechniqueProgress,
@@ -58,12 +63,14 @@ import type {
   ExplorationLocationId,
   GameState,
   LedgerEntry,
+  LifeEndingId,
   LifeSummary,
   PersonEventId,
   SectId,
   SectExchangeId,
   SectMissionId,
   SettlementResult,
+  TechniqueId,
 } from './types';
 import { createStoryState, recordStoryChoice } from './story';
 
@@ -174,6 +181,14 @@ const getNextPersonEvent = (
   }
   if (
     action.type === 'foundation_trial' &&
+    state.cultivationPath.auxiliaryTechniqueId &&
+    hasCompletedPersonEvent(state, 'xuan-song-lesson') &&
+    !hasCompletedPersonEvent(state, 'foundation-dual-technique')
+  ) {
+    return PERSON_EVENTS['foundation-dual-technique'];
+  }
+  if (
+    action.type === 'foundation_trial' &&
     hasCompletedPersonEvent(state, 'nameless-well-echo') &&
     !hasCompletedPersonEvent(state, 'nameless-well-oath') &&
     state.social.relationships['nameless-soul'].affinity >= 10
@@ -238,6 +253,7 @@ const endLife = (
   state: GameState,
   deathReason: LifeSummary['deathReason'],
   endedAt: number,
+  endingId: LifeEndingId = deathReason === 'fatal_injury' ? 'fell-on-the-path' : 'unfinished-page',
 ): LedgerEntry => {
   const character = state.character;
   const lifeNumber = Math.max(state.legacy?.lifeCount ?? 0, state.pastLives?.length ?? 0) + 1;
@@ -253,6 +269,7 @@ const endLife = (
     discoveredRelationshipCount: Object.values(state.social.relationships)
       .filter((relationship) => relationship.discovered).length,
     sectId: state.social.sect.sectId,
+    endingId,
     keyEvents: state.ledger
       .filter((entry) => ['breakthrough', 'exploration', 'relationship'].includes(entry.category))
       .slice(0, 8)
@@ -276,17 +293,24 @@ const endLife = (
     ])),
     techniqueFragments: Math.min(3, Math.max(0, state.inventory.techniqueFragments)),
     previousLifeNames: [...(state.legacy?.previousLifeNames ?? []), character.name].slice(-20),
+    activeBoonId: state.legacy?.activeBoonId ?? null,
   };
   character.currentAction = null;
   state.pendingExplorationEvent = null;
   state.social.pendingPersonEvent = null;
 
   const ageYears = Math.floor(character.ageDays / 365);
-  const reasonLabel = deathReason === 'fatal_injury' ? '重伤不治' : '寿元耗尽';
+  const reasonLabel = deathReason === 'fatal_injury'
+    ? '重伤不治'
+    : deathReason === 'golden_core_quest'
+      ? LIFE_ENDINGS[endingId].label
+      : '寿元耗尽';
   return createLedgerEntry(
     'death',
-    '本世终章',
-    `${character.name}在${ageYears}岁时走完了这一世。长生簿合上最后一页，却替你保留了这段人生走过的山河与名字。`,
+    deathReason === 'golden_core_quest' ? `结丹终章：${LIFE_ENDINGS[endingId].label}` : '本世终章',
+    deathReason === 'golden_core_quest'
+      ? `${character.name}在${ageYears}岁时叩开金丹之问。${LIFE_ENDINGS[endingId].summary}这一世至此圆满落笔。`
+      : `${character.name}在${ageYears}岁时走完了这一世。长生簿合上最后一页，却替你保留了这段人生走过的山河与名字。`,
     ['终章', reasonLabel, `第${lifeNumber}世`],
     endedAt,
   );
@@ -413,6 +437,16 @@ const ACTION_PLAN_NOTES: Record<ActionType, readonly string[]> = {
     '你把境界稳在丹田深处，带上空白的残卷，准备去更高处换一份真正值得留下的见闻。',
     '从今天起，凡人的山路不再是全部。你向那片只对筑基修士开放的云外峰场走去。',
   ],
+  technique_swap: [
+    '你封住外息，把主辅两门功法重新排入周天，准备让另一种气机接管经脉。',
+    '两门功法不能永远争抢同一个位置。你坐回蒲团，开始一次有始有终的调息转修。',
+    '你暂时放下修为进境，只处理体内两道不同的呼吸，直到主次重新分明。',
+  ],
+  golden_core_ordeal: [
+    '你将这一世走过的山河、见过的人与学过的功法一一写在身前，准备让它们共同回答最后一问。',
+    '丹田中的灵气已经无处再去。你没有继续堆叠修为，而是回头整理这一世真正留下的东西。',
+    '长生簿翻到一页从未写过的空白。你知道，接下来凝成的不只是金丹，也是这一世的结局。',
+  ],
 };
 
 const CAVE_PRODUCTION_RESULTS = [
@@ -515,6 +549,29 @@ const actionResult = (
   if (actionType === 'breakthrough') {
     return resolveBreakthrough(state, completedAt, random);
   }
+  if (actionType === 'technique_swap') {
+    const activeTechnique = getActiveTechnique(state.cultivationPath);
+    const auxiliaryTechnique = getAuxiliaryTechnique(state.cultivationPath);
+    if (!activeTechnique || !auxiliaryTechnique) return [];
+    state.cultivationPath.activeTechniqueId = auxiliaryTechnique.id;
+    state.cultivationPath.auxiliaryTechniqueId = activeTechnique.id;
+    const combination = getTechniqueCombination(state.cultivationPath);
+    return [createLedgerEntry(
+      'action',
+      `转修：${auxiliaryTechnique.name}`,
+      `调息结束后，${auxiliaryTechnique.name}接过主修之位，${activeTechnique.name}退居辅修。两道气机没有消失，只是重新分出了先后。`,
+      [
+        `主修：${auxiliaryTechnique.name}`,
+        `辅修：${activeTechnique.name}`,
+        combination ? `${combination.kind === 'resonance' ? '联动' : '冲突'}：${combination.label}` : '组合：平稳并行',
+      ],
+      completedAt,
+    )];
+  }
+  if (actionType === 'golden_core_ordeal') {
+    const endingId = getGoldenCoreEnding(state);
+    return [endLife(state, 'golden_core_quest', completedAt, endingId)];
+  }
 
   const { character, inventory } = state;
   const caveEffects = getCaveEffects(state.cave);
@@ -536,7 +593,9 @@ const actionResult = (
     const fragmentGain = randomInt(1, 2, random);
     inventory.spiritStones += stoneGain;
     inventory.techniqueFragments += fragmentGain;
-    cultivationGain = 24 + Math.min(12, character.realm.stage * 2);
+    cultivationGain = Math.floor(
+      (24 + Math.min(12, character.realm.stage * 2)) * (1 + techniqueEffects.foundationTrialCultivationMultiplier),
+    );
     title = choose(['云外峰场归来', '试炼石阶尽头', '筑基后的一次远行']);
     body = `${choose(ACTION_PLAN_NOTES.foundation_trial)}你在断云石台下找到灵石 ${stoneGain} 枚和功法残页 ${fragmentGain} 页，带回来的不只是收获，还有一段关于更高境界的模糊预感。`;
     changes.push(`灵石 +${stoneGain}`, `功法残页 +${fragmentGain}`, `修为 +${cultivationGain}`);
@@ -614,7 +673,7 @@ const actionResult = (
     cultivationGain = Math.floor(
       cultivationGain * caveEffects.cultivationMultiplier * (1 + techniqueEffects.cultivationMultiplier + sectEffects.cultivationMultiplier),
     );
-    const injured = random() < 0.25;
+    const injured = random() < 0.25 + techniqueEffects.overdriveInjuryChanceBonus;
     character.attributes.mentalState = Math.max(0, character.attributes.mentalState - 5);
     title = injured ? choose(['经脉微裂', '险招留下的刺痛', '强行运功，略受反噬']) : choose(['险中取进', '刀锋上的一轮运功', '压住了那口险气']);
     body = injured ? choose(OVERDRIVE_INJURY_RESULTS) : choose(OVERDRIVE_SAFE_RESULTS);
@@ -793,9 +852,12 @@ const actionResult = (
     : actionType === 'meditate' || actionType === 'insight'
       ? 1
       : 0;
-  if (startingInjury && recoveryPoints > 0) {
+  const adjustedRecoveryPoints = recoveryPoints > 0
+    ? recoveryPoints + techniqueEffects.injuryRecoveryBonus
+    : 0;
+  if (startingInjury && adjustedRecoveryPoints > 0) {
     const recoveryBefore = startingInjury.recoveryPoints;
-    character.injury = recoverInjury(character.injury, recoveryPoints);
+    character.injury = recoverInjury(character.injury, adjustedRecoveryPoints);
     if (!character.injury) {
       changes.push('伤势痊愈');
     } else if (character.injury.recoveryPoints < recoveryBefore) {
@@ -920,6 +982,7 @@ export const settleGame = (
     discoveredLocations: [],
     techniqueFragments: 0,
     previousLifeNames: [],
+    activeBoonId: null,
   };
   if (state.lifeStatus === 'dead') {
     return { state, newEntries: [] };
@@ -930,10 +993,12 @@ export const settleGame = (
   state.completedExplorationEventIds = state.completedExplorationEventIds ?? [];
   state.lastExplorationEventId = state.lastExplorationEventId ?? null;
   state.story = state.story ?? createStoryState();
+  state.cave = state.cave ?? createCave(now);
   const newEntries: LedgerEntry[] = [];
   const elapsedMs = now - state.lastSettledAt;
 
-  const settledCave = settleCave(state.cave ?? createCave(now), now);
+  const offlineLimitMinutes = getOfflineLimitMinutes(state);
+  const settledCave = settleCave(state.cave, now, offlineLimitMinutes);
   state.cave = settledCave.cave;
   if (settledCave.produced.cultivation > 0 || settledCave.produced.herbs > 0) {
     newEntries.push(
@@ -967,7 +1032,7 @@ export const settleGame = (
     return { state, newEntries };
   }
 
-  const cappedElapsedMs = Math.min(elapsedMs, MAX_OFFLINE_MINUTES * MINUTE_MS);
+  const cappedElapsedMs = Math.min(elapsedMs, offlineLimitMinutes * MINUTE_MS);
   let agedActionUntil: number | null = null;
   if (state.character.currentAction) {
     const activeActionMs = Math.min(
@@ -1046,13 +1111,16 @@ export const settleGame = (
   } else if (state.character.currentAction && now >= state.character.currentAction.endsAt) {
     const completedAction = state.character.currentAction;
     newEntries.push(...actionResult(state, completedAction.type, completedAction.endsAt, random));
-    if (state.social.sect.sectId) {
+    const completedLife = completedAction.type === 'golden_core_ordeal';
+    if (!completedLife && state.social.sect.sectId) {
       state.social.sect.contribution += 1;
     }
     state.character.currentAction = null;
 
     const fatalInjury = state.character.injury?.severity === 3 && state.character.injury.recoveryPoints >= 10;
-    if (fatalInjury) {
+    if (completedLife) {
+      // 叩问金丹会主动完成本世，不再触发后续随机事件。
+    } else if (fatalInjury) {
       newEntries.push(endLife(state, 'fatal_injury', completedAction.endsAt));
     } else if (state.character.ageDays < state.character.lifespanDays) {
       const personEvent = getNextPersonEvent(state, completedAction);
@@ -1126,7 +1194,7 @@ export const getBreakthroughStartError = (
     input.character.realm.major === 'foundation_establishment' &&
     input.character.realm.stage >= getRealmStageCap(input.character.realm.major)
   ) {
-    return '道基已经修至圆满，当前版本尚未开放金丹境。';
+    return '道基已经修至圆满，无需继续小境突破。备齐终局资源后，可以叩问金丹。';
   }
   if (input.character.currentAction) return '你正在进行另一项行动。';
   if (input.pendingExplorationEvent || input.social?.pendingPersonEvent) {
@@ -1166,6 +1234,31 @@ export const getActionStartError = (
   }
   if (type === 'foundation_trial' && input.character.realm.major !== 'foundation_establishment') {
     return '筑基之后才能踏入试炼场。先继续修炼，跨过当前境界关隘。';
+  }
+  if (type === 'golden_core_ordeal') {
+    if (input.character.realm.major !== 'foundation_establishment' || input.character.realm.stage < getRealmStageCap('foundation_establishment')) {
+      return '筑基圆满后才能叩问金丹。';
+    }
+    if (input.character.realm.cultivation < input.character.realm.cultivationRequired) {
+      return `修为还差 ${input.character.realm.cultivationRequired - input.character.realm.cultivation} 点，尚不足以凝丹。`;
+    }
+    if (input.story.foundationTrialCount < 3) return '至少完成三次筑基试炼，才看得清自己的金丹之问。';
+    if (getInjuryEffects(input.character.injury).blocksOverdrive) return '重伤未愈，无法承受结丹终问。';
+    if (
+      input.inventory.spiritStones < GOLDEN_CORE_ORDEAL_COST.spiritStones ||
+      input.inventory.herbs < GOLDEN_CORE_ORDEAL_COST.herbs ||
+      input.inventory.techniqueFragments < GOLDEN_CORE_ORDEAL_COST.techniqueFragments
+    ) {
+      return `叩问金丹需要灵石 ${GOLDEN_CORE_ORDEAL_COST.spiritStones}、灵草 ${GOLDEN_CORE_ORDEAL_COST.herbs}、功法残页 ${GOLDEN_CORE_ORDEAL_COST.techniqueFragments}。`;
+    }
+  }
+  if (type === 'technique_swap') {
+    if (input.character.realm.major !== 'foundation_establishment') {
+      return '筑基之后才能同时驾驭两门功法。';
+    }
+    if (!input.cultivationPath.auxiliaryTechniqueId) {
+      return '尚未学会第二门功法，无法调换主辅。';
+    }
   }
   if (type === 'explore' && !input.discoveredLocations.includes(locationId)) {
     return '这个地点尚未发现，暂时不能前往。';
@@ -1276,6 +1369,28 @@ export const startBreakthrough = (
   return { state, newEntries: [entry] };
 };
 
+export const startGoldenCoreOrdeal = (
+  input: GameState,
+  now = Date.now(),
+  random: RandomSource = Math.random,
+): BreakthroughMutationResult => {
+  const error = getActionStartError(input, 'golden_core_ordeal', 'qingstone-mountain', undefined, now);
+  if (error) return { state: structuredClone(input), newEntries: [], error };
+  const state = startAction(input, 'golden_core_ordeal', now, 'qingstone-mountain', undefined, random);
+  state.inventory.spiritStones -= GOLDEN_CORE_ORDEAL_COST.spiritStones;
+  state.inventory.herbs -= GOLDEN_CORE_ORDEAL_COST.herbs;
+  state.inventory.techniqueFragments -= GOLDEN_CORE_ORDEAL_COST.techniqueFragments;
+  const entry = state.ledger[0];
+  if (entry) {
+    entry.tags.push(
+      `灵石 -${GOLDEN_CORE_ORDEAL_COST.spiritStones}`,
+      `灵草 -${GOLDEN_CORE_ORDEAL_COST.herbs}`,
+      `功法残页 -${GOLDEN_CORE_ORDEAL_COST.techniqueFragments}`,
+    );
+  }
+  return { state, newEntries: entry ? [entry] : [] };
+};
+
 export const startSectMission = (
   input: GameState,
   missionId: SectMissionId,
@@ -1325,6 +1440,7 @@ export const chooseCultivationSchool = (
 
   state.cultivationPath.schoolId = schoolId;
   state.cultivationPath.activeTechniqueId = technique.id;
+  state.cultivationPath.auxiliaryTechniqueId = null;
   state.cultivationPath.techniques[technique.id] = createTechniqueProgress(technique);
   const entry = createLedgerEntry(
     'action',
@@ -1335,6 +1451,61 @@ export const chooseCultivationSchool = (
   );
   state.ledger = [entry, ...state.ledger].slice(0, 100);
   return { state, newEntries: [entry] };
+};
+
+export const learnAuxiliaryTechnique = (
+  input: GameState,
+  techniqueId: TechniqueId,
+  now = Date.now(),
+): TechniqueMutationResult => {
+  const state = structuredClone(input);
+  state.cultivationPath = state.cultivationPath ?? createCultivationPath();
+  if (state.lifeStatus === 'dead') return { state, newEntries: [], error: '本世已经结束，不能再研习功法。' };
+  if (state.character.currentAction) return { state, newEntries: [], error: '当前行动尚未结束，不能分心研习第二门功法。' };
+  if (state.pendingExplorationEvent || state.social.pendingPersonEvent) {
+    return { state, newEntries: [], error: '请先处理眼前的事件，再研习第二门功法。' };
+  }
+  if (state.character.realm.major !== 'foundation_establishment') {
+    return { state, newEntries: [], error: '筑基之后，经脉足以容纳第二门功法。' };
+  }
+  const activeTechnique = getActiveTechnique(state.cultivationPath);
+  const technique = TECHNIQUE_DEFINITIONS[techniqueId];
+  if (!activeTechnique || !technique) return { state, newEntries: [], error: '请先确定本世的主修功法。' };
+  if (technique.id === activeTechnique.id) return { state, newEntries: [], error: '这门功法已经是当前主修。' };
+  if (state.cultivationPath.auxiliaryTechniqueId) return { state, newEntries: [], error: '辅修槽已经占用，本世暂时只能并修两门功法。' };
+  if (state.inventory.techniqueFragments < AUXILIARY_TECHNIQUE_COST) {
+    return { state, newEntries: [], error: `研习第二门功法需要 ${AUXILIARY_TECHNIQUE_COST} 页功法残页。` };
+  }
+
+  state.inventory.techniqueFragments -= AUXILIARY_TECHNIQUE_COST;
+  state.cultivationPath.auxiliaryTechniqueId = technique.id;
+  state.cultivationPath.techniques[technique.id] ??= createTechniqueProgress(technique);
+  const combination = getTechniqueCombination(state.cultivationPath);
+  const entry = createLedgerEntry(
+    'action',
+    `辅修入门：${technique.name}`,
+    `筑基后的经脉终于容得下第二种呼吸。你保留${activeTechnique.name}为主修，将${technique.name}安置在辅修之位。`,
+    [
+      `功法残页 -${AUXILIARY_TECHNIQUE_COST}`,
+      technique.auxiliaryEffectLabel,
+      combination ? `${combination.kind === 'resonance' ? '联动' : '冲突'}：${combination.label}` : '组合：平稳并行',
+    ],
+    now,
+  );
+  state.ledger = [entry, ...state.ledger].slice(0, 100);
+  return { state, newEntries: [entry] };
+};
+
+export const startTechniqueSwap = (
+  input: GameState,
+  now = Date.now(),
+  random: RandomSource = Math.random,
+): TechniqueMutationResult => {
+  const error = getActionStartError(input, 'technique_swap', 'qingstone-mountain', undefined, now);
+  if (error) return { state: structuredClone(input), newEntries: [], error };
+  const state = startAction(input, 'technique_swap', now, 'qingstone-mountain', undefined, random);
+  const entry = state.ledger[0];
+  return { state, newEntries: entry ? [entry] : [] };
 };
 
 export const researchTechniqueBranch = (
@@ -1508,6 +1679,10 @@ export const resolvePersonEvent = (
     1,
     state.character.attributes.physique + (effects.physique ?? 0),
   );
+  state.character.attributes.comprehension = Math.max(
+    1,
+    state.character.attributes.comprehension + (effects.comprehension ?? 0),
+  );
   state.character.attributes.spiritSense = Math.max(
     1,
     state.character.attributes.spiritSense + (effects.spiritSense ?? 0),
@@ -1532,6 +1707,14 @@ export const resolvePersonEvent = (
   ];
   state.social.pendingPersonEvent = null;
   state.story = recordStoryChoice(state.story, 'person', event.id, choice.id, now);
+  if (event.id === 'foundation-dual-technique') {
+    const mainTechniqueId = state.cultivationPath.activeTechniqueId;
+    const auxiliaryTechniqueId = state.cultivationPath.auxiliaryTechniqueId;
+    if (mainTechniqueId && auxiliaryTechniqueId) {
+      const pairFlag = `technique-pair:${[mainTechniqueId, auxiliaryTechniqueId].sort().join('+')}`;
+      if (!state.story.worldFlags.includes(pairFlag)) state.story.worldFlags.push(pairFlag);
+    }
+  }
 
   const changes = [
     `${RELATIONSHIPS[event.relationshipId].name}好感 ${effects.affinity > 0 ? '+' : ''}${effects.affinity}`,
@@ -1540,6 +1723,7 @@ export const resolvePersonEvent = (
     effects.techniqueFragments ? `功法残页 ${effects.techniqueFragments > 0 ? '+' : ''}${effects.techniqueFragments}` : '',
     effects.cultivation ? `修为 +${effects.cultivation}` : '',
     effects.physique ? `根骨 ${effects.physique > 0 ? '+' : ''}${effects.physique}` : '',
+    effects.comprehension ? `悟性 ${effects.comprehension > 0 ? '+' : ''}${effects.comprehension}` : '',
     effects.spiritSense ? `神识 ${effects.spiritSense > 0 ? '+' : ''}${effects.spiritSense}` : '',
     effects.mentalState ? `心境 ${effects.mentalState > 0 ? '+' : ''}${effects.mentalState}` : '',
     effects.karma ? `因果 ${effects.karma > 0 ? '+' : ''}${effects.karma}` : '',
@@ -1722,7 +1906,7 @@ export const exchangeSectReputation = (
   return { state, newEntries: [entry] };
 };
 
-export { collectCave, craftHealingPill, treatInjury, upgradeCaveBuilding } from './caveActions';
+export { collectCave, craftHealingPill, performCaveMastery, treatInjury, upgradeCaveBuilding } from './caveActions';
 export type { CaveMutationResult } from './caveActions';
 
 export const tryBreakthrough = (

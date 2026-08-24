@@ -1,7 +1,7 @@
-import { CAVE_BUILDINGS, createCave, getCaveEffects, getUpgradeCost, settleCave } from './cave';
+import { CAVE_BUILDINGS, createCave, getCaveEffects, getOfflineLimitMinutes, getUpgradeCost, settleCave } from './cave';
 import { recoverInjury } from './injury';
 import { createLedgerEntry } from './save';
-import type { CaveBuildingId, GameState, LedgerEntry } from './types';
+import type { CaveBuildingId, CaveMasteryId, GameState, LedgerEntry } from './types';
 
 export type RandomSource = () => number;
 
@@ -21,8 +21,95 @@ const pick = <T,>(items: readonly T[], random: RandomSource) =>
   items[Math.floor(random() * items.length)];
 
 const settleForMutation = (state: GameState, now: number) => {
-  const settled = settleCave(state.cave ?? createCave(now), now);
+  const cave = state.cave ?? createCave(now);
+  state.cave = cave;
+  const settled = settleCave(cave, now, getOfflineLimitMinutes(state));
   state.cave = settled.cave;
+};
+
+export const CAVE_MASTERY_DEFINITIONS: Record<CaveMasteryId, {
+  label: string;
+  buildingId: CaveBuildingId;
+  summary: string;
+  cost: { spiritStones: number; herbs: number; techniqueFragments: number };
+}> = {
+  'spirit-marrow': {
+    label: '凝炼灵髓',
+    buildingId: 'spirit-gathering-array',
+    summary: '让满级聚灵阵压缩灵气，形成可直接纳入丹田的一滴灵髓。',
+    cost: { spiritStones: 45, herbs: 4, techniqueFragments: 0 },
+  },
+  'years-herb': {
+    label: '培育岁华草',
+    buildingId: 'spirit-field',
+    summary: '让满级灵田培育一株跨季不凋的岁华草，本世最多服用三次。',
+    cost: { spiritStones: 30, herbs: 12, techniqueFragments: 0 },
+  },
+  'merged-script': {
+    label: '推演合卷',
+    buildingId: 'scripture-pavilion',
+    summary: '在满级藏经阁中合并残页，同时推演当前主修与辅修。',
+    cost: { spiritStones: 35, herbs: 0, techniqueFragments: 5 },
+  },
+};
+
+export const performCaveMastery = (
+  input: GameState,
+  masteryId: CaveMasteryId,
+  now = Date.now(),
+): CaveMutationResult => {
+  const state = structuredClone(input);
+  settleForMutation(state, now);
+  const definition = CAVE_MASTERY_DEFINITIONS[masteryId];
+  if (!state.cave.unlocked) return { state, newEntries: [], error: '洞府尚未解锁。' };
+  if (state.character.currentAction) return { state, newEntries: [], error: '行动进行中，无法主持洞府深层劳作。' };
+  if (state.pendingExplorationEvent || state.social.pendingPersonEvent) return { state, newEntries: [], error: '请先处理眼前事件。' };
+  if (state.cave.buildings[definition.buildingId].level < 3) return { state, newEntries: [], error: '对应建筑达到三级后才能开启这项劳作。' };
+  if (masteryId === 'years-herb' && state.cave.mastery.yearsHerbRituals >= 3) {
+    return { state, newEntries: [], error: '本世已经服用过三株岁华草，继续服用不会再有作用。' };
+  }
+  if (masteryId === 'merged-script' && !state.cultivationPath.activeTechniqueId) {
+    return { state, newEntries: [], error: '尚未选定主修功法，无法推演合卷。' };
+  }
+  const { cost } = definition;
+  if (
+    state.inventory.spiritStones < cost.spiritStones ||
+    state.inventory.herbs < cost.herbs ||
+    state.inventory.techniqueFragments < cost.techniqueFragments
+  ) return { state, newEntries: [], error: '现有资源不足以完成这项洞府劳作。' };
+
+  state.inventory.spiritStones -= cost.spiritStones;
+  state.inventory.herbs -= cost.herbs;
+  state.inventory.techniqueFragments -= cost.techniqueFragments;
+  const changes = [
+    cost.spiritStones ? `灵石 -${cost.spiritStones}` : '',
+    cost.herbs ? `灵草 -${cost.herbs}` : '',
+    cost.techniqueFragments ? `功法残页 -${cost.techniqueFragments}` : '',
+  ].filter(Boolean);
+  let body = '';
+  if (masteryId === 'spirit-marrow') {
+    state.character.realm.cultivation += 60;
+    state.cave.mastery.spiritMarrowRefinements += 1;
+    changes.push('修为 +60');
+    body = '阵纹把一夜灵光压成一滴沉重灵髓。它落入丹田时没有声响，却替你省下了许多寻常吐纳。';
+  } else if (masteryId === 'years-herb') {
+    state.character.lifespanDays += 365;
+    state.cave.mastery.yearsHerbRituals += 1;
+    changes.push('本世寿元 +1 年');
+    body = '岁华草入口没有药香，只有一阵很淡的春雨气。长生簿上的余年随之多出了一笔。';
+  } else {
+    const techniqueIds = [state.cultivationPath.activeTechniqueId, state.cultivationPath.auxiliaryTechniqueId].filter(Boolean) as string[];
+    for (const techniqueId of techniqueIds) {
+      const progress = state.cultivationPath.techniques[techniqueId];
+      if (progress) progress.proficiency = Math.min(100, progress.proficiency + 12);
+    }
+    state.cave.mastery.mergedScriptDeductions += 1;
+    changes.push(`主辅功法熟练度 +12`);
+    body = '残页在经阁灯下重新排成一卷。主辅两道周天彼此批注，你终于看清它们能够同行的下一段路。';
+  }
+  const entry = createLedgerEntry('action', definition.label, body, changes, now);
+  state.ledger = [entry, ...state.ledger].slice(0, 100);
+  return { state, newEntries: [entry] };
 };
 
 export const collectCave = (
