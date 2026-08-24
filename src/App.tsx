@@ -20,6 +20,7 @@ import {
   getUpgradeCost,
 } from './game/cave';
 import { CAVE_MASTERY_DEFINITIONS } from './game/caveActions';
+import { assetUrl } from './game/assets';
 import { EXPLORATION_EVENTS, EXPLORATION_LOCATIONS, getExplorationEvent, getWorldCycle } from './game/exploration';
 import { getInjuryLabel, getInjurySourceLabel } from './game/injury';
 import { LEGACY_BOONS, LIFE_ENDINGS } from './game/legacy';
@@ -1000,7 +1001,7 @@ const LedgerView = ({ game, entries, onRead, onReadAll, action, now, offlineSumm
   onOpenPendingEvent: (tab: PendingLedgerEvent['tab']) => void;
 }) => (
   <div className="view-stack">
-    <section className="hero-panel illustrated-hero" style={{ '--hero-image': `url(${game.character.realm.major === 'foundation_establishment' ? '/assets/locations/cloudbreak-ridge.png' : '/assets/locations/qingstone-mountain.png'})` } as CSSProperties}>
+    <section className="hero-panel illustrated-hero" style={{ '--hero-image': `url(${assetUrl(game.character.realm.major === 'foundation_establishment' ? 'assets/locations/cloudbreak-ridge.png' : 'assets/locations/qingstone-mountain.png')})` } as CSSProperties}>
       <div>
         <div className="eyebrow">YOUR JOURNEY · 你的修行</div>
         <h2>长生簿</h2>
