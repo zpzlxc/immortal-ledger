@@ -20,10 +20,18 @@ import {
   getUpgradeCost,
 } from './game/cave';
 import { CAVE_MASTERY_DEFINITIONS } from './game/caveActions';
+import { CAVE_RESEARCH_DEFINITIONS } from './game/caveResearch';
 import { assetUrl } from './game/assets';
 import { EXPLORATION_EVENTS, EXPLORATION_LOCATIONS, getExplorationEvent, getWorldCycle } from './game/exploration';
 import { getInjuryLabel, getInjurySourceLabel } from './game/injury';
-import { LEGACY_BOONS, LIFE_ENDINGS } from './game/legacy';
+import {
+  getLegacyStartingBonuses,
+  getLegacyTalentOptionCount,
+  LEGACY_ACHIEVEMENTS,
+  LEGACY_BOONS,
+  LEGACY_STORY_MARKS,
+  LIFE_ENDINGS,
+} from './game/legacy';
 import { getOfflineSummary, type OfflineSummary } from './game/offline';
 import {
   getPersonEvent,
@@ -40,6 +48,7 @@ import {
 } from './game/people';
 import {
   CULTIVATION_SCHOOLS,
+  TECHNIQUE_COMBINATIONS,
   TECHNIQUE_DEFINITIONS,
   getActiveTechnique,
   getAuxiliaryTechnique,
@@ -51,12 +60,15 @@ import type {
   ActionType,
   CaveBuildingId,
   CaveMasteryId,
+  CaveResearchId,
   CultivationSchoolId,
   ExplorationLocationId,
   GameState,
   LedgerEntry,
+  LegacyAchievementId,
   LegacyBoonId,
   LegacyState,
+  LegacyStoryMarkId,
   LifeSummary,
   SectId,
   SectExchangeId,
@@ -94,6 +106,7 @@ import {
   startSectMission,
   startTechniqueSwap,
   startAction,
+  startCaveResearch,
   treatInjury,
   upgradeCaveBuilding,
 } from './game/settlement';
@@ -459,6 +472,21 @@ const App = () => {
     if (result.newEntries.length > 0) setNotice(result.newEntries);
   };
 
+  const handleCaveResearch = (researchId: CaveResearchId) => {
+    if (!game) return;
+    setErrorMessage('');
+    const settledAt = Date.now();
+    const settled = settleGame(game, settledAt);
+    captureOfflineSummary(game, settled.state, settledAt);
+    const result = startCaveResearch(settled.state, researchId, settledAt);
+    saveGame(result.state);
+    setGame(result.state);
+    setErrorMessage(result.error ?? '');
+    if (settled.newEntries.length > 0 || result.newEntries.length > 0) {
+      setNotice([...settled.newEntries, ...result.newEntries]);
+    }
+  };
+
   const markRead = (entryId: string) => {
     setGame((previous) => {
       if (!previous) return previous;
@@ -747,12 +775,15 @@ const App = () => {
               inventory={game.inventory}
               sectId={game.social.sect.sectId}
               injury={game.character.injury}
+              currentAction={game.character.currentAction}
+              now={now}
               offlineLimitMinutes={getOfflineLimitMinutes(game)}
               onCollect={handleCollectCave}
               onTreat={handleTreatInjury}
               onCraftPill={handleCraftHealingPill}
               onUpgrade={handleUpgradeCaveBuilding}
               onMastery={handleCaveMastery}
+              onStartResearch={handleCaveResearch}
             />
           )}
           {activeTab === 'people' && (
@@ -779,7 +810,7 @@ const App = () => {
 
 const CreateCharacter = ({ onCreate }: { onCreate: (name: string, talent: Talent) => void }) => {
   const [name, setName] = useState('沈砚');
-  const [talentOptions] = useState(() => shuffle(TALENTS).slice(0, 3));
+  const [talentOptions] = useState(() => shuffle(TALENTS).slice(0, getLegacyTalentOptionCount()));
   const [selectedTalentId, setSelectedTalentId] = useState(talentOptions[0].id);
   const selectedTalent = talentOptions.find((talent) => talent.id === selectedTalentId) ?? talentOptions[0];
 
@@ -838,10 +869,18 @@ const LifeEndView = ({ summary, legacy, onCreate }: {
   onCreate: (name: string, talent: Talent, boonId: LegacyBoonId) => void;
 }) => {
   const [name, setName] = useState(`${summary.characterName}·续`);
-  const [talentOptions] = useState(() => shuffle(TALENTS).slice(0, 3));
+  const [talentOptions] = useState(() => shuffle(TALENTS).slice(0, getLegacyTalentOptionCount(legacy)));
   const [selectedTalentId, setSelectedTalentId] = useState(talentOptions[0].id);
   const [selectedBoonId, setSelectedBoonId] = useState<LegacyBoonId>('old-friend-echo');
   const selectedTalent = talentOptions.find((talent) => talent.id === selectedTalentId) ?? talentOptions[0];
+  const startingBonuses = getLegacyStartingBonuses(legacy);
+  const unlockedAchievements = new Set(legacy.achievementIds);
+  const startingBonusLabels = [
+    startingBonuses.talentOptions > 0 ? `先天天赋选项 +${startingBonuses.talentOptions}` : '',
+    startingBonuses.spiritStones > 0 ? `灵石 +${startingBonuses.spiritStones}` : '',
+    startingBonuses.herbs > 0 ? `灵草 +${startingBonuses.herbs}` : '',
+    startingBonuses.techniqueFragments > 0 ? `功法残页 +${startingBonuses.techniqueFragments}` : '',
+  ].filter(Boolean);
 
   return (
     <div className="onboarding-shell life-end-shell">
@@ -878,6 +917,20 @@ const LifeEndView = ({ summary, legacy, onCreate }: {
         <div className="legacy-box">
           <strong>前世遗泽</strong>
           <span>已发现地点 {legacy.discoveredLocations.length} 处 · 带回功法残页 {legacy.techniqueFragments} 页 · 历世记录 {legacy.lifeCount} 世</span>
+        </div>
+
+        <div className="legacy-achievement-panel">
+          <div className="section-heading"><span>跨世目标</span><small>{unlockedAchievements.size} / {Object.keys(LEGACY_ACHIEVEMENTS).length} 已完成</small></div>
+          <div className="legacy-achievement-grid">
+            {(Object.entries(LEGACY_ACHIEVEMENTS) as Array<[LegacyAchievementId, (typeof LEGACY_ACHIEVEMENTS)[LegacyAchievementId]]>).map(([achievementId, achievement]) => {
+              const unlocked = unlockedAchievements.has(achievementId);
+              return <article className={`legacy-achievement-card ${unlocked ? 'unlocked' : ''}`} key={achievementId}>
+                <div className="legacy-achievement-mark">{unlocked ? '✓' : '·'}</div>
+                <div><strong>{achievement.label}</strong><p>{unlocked ? achievement.summary : achievement.requirement}</p><small>{achievement.reward}</small></div>
+              </article>;
+            })}
+          </div>
+          {startingBonusLabels.length > 0 && <div className="legacy-starting-bonuses">本轮回已生效：{startingBonusLabels.join(' · ')}</div>}
         </div>
 
         <div className="next-life-heading">
@@ -1109,6 +1162,9 @@ const CurrentActionCard = ({ action, now }: { action: GameState['character']['cu
   const sectMission = action.type === 'sect_mission' && action.missionId
     ? getSectMission(action.missionId)
     : null;
+  const caveResearch = action.type === 'cave_research' && action.researchId
+    ? CAVE_RESEARCH_DEFINITIONS[action.researchId]
+    : null;
   const total = action.endsAt - action.startedAt;
   const progress = Math.min(100, Math.max(0, ((now - action.startedAt) / total) * 100));
   const plannedCycles = action.plannedCycles ?? 1;
@@ -1118,8 +1174,8 @@ const CurrentActionCard = ({ action, now }: { action: GameState['character']['cu
       <div className="action-icon large">{definition.icon}</div>
       <div className="action-card-main">
         <div className="action-card-top"><span className="eyebrow">CURRENT ACTION · 当前行动</span><strong>{formatRemaining(action.endsAt, now)}</strong></div>
-        <h3>{explorationLocation ? `${definition.label} · ${explorationLocation.label}` : sectMission ? `${definition.label} · ${sectMission.title}` : definition.label}{plannedCycles > 1 ? ` · 连续 ${plannedCycles} 轮` : ''}</h3>
-        <p>{plannedCycles > 1 ? `已经结算 ${completedCycles} / ${plannedCycles} 轮。触及突破关隘或伤势过重时会自动提前出关。` : explorationLocation ? explorationLocation.summary : sectMission ? sectMission.summary : definition.description}</p>
+        <h3>{explorationLocation ? `${definition.label} · ${explorationLocation.label}` : sectMission ? `${definition.label} · ${sectMission.title}` : caveResearch ? `${definition.label} · ${caveResearch.label}` : definition.label}{plannedCycles > 1 ? ` · 连续 ${plannedCycles} 轮` : ''}</h3>
+        <p>{plannedCycles > 1 ? `已经结算 ${completedCycles} / ${plannedCycles} 轮。触及突破关隘或伤势过重时会自动提前出关。` : explorationLocation ? explorationLocation.summary : sectMission ? sectMission.summary : caveResearch ? caveResearch.summary : definition.description}</p>
         <div className="progress-track action-progress"><div style={{ width: `${progress}%` }} /></div>
       </div>
     </div>
@@ -1760,17 +1816,20 @@ const PeopleView = ({ social, now, currentAction, onResolveEvent, onJoinSect, on
   );
 };
 
-const CaveView = ({ cave, inventory, sectId, injury, offlineLimitMinutes, onCollect, onTreat, onCraftPill, onUpgrade, onMastery }: {
+const CaveView = ({ cave, inventory, sectId, injury, currentAction, now, offlineLimitMinutes, onCollect, onTreat, onCraftPill, onUpgrade, onMastery, onStartResearch }: {
   cave: GameState['cave'];
   inventory: GameState['inventory'];
   sectId: SectId | null;
   injury: GameState['character']['injury'];
+  currentAction: GameState['character']['currentAction'];
+  now: number;
   offlineLimitMinutes: number;
   onCollect: () => void;
   onTreat: (treatment: 'herbs' | 'pill') => void;
   onCraftPill: () => void;
   onUpgrade: (buildingId: CaveBuildingId) => void;
   onMastery: (masteryId: CaveMasteryId) => void;
+  onStartResearch: (researchId: CaveResearchId) => void;
 }) => {
   if (!cave.unlocked) {
     return (
@@ -1784,6 +1843,9 @@ const CaveView = ({ cave, inventory, sectId, injury, offlineLimitMinutes, onColl
   const effects = getCaveEffects(cave);
   const studyDuration = getActionDurationMinutes('study', cave, undefined, sectId);
   const storedTotal = cave.stored.cultivation + cave.stored.herbs;
+  const activeResearch = currentAction?.type === 'cave_research' && currentAction.researchId
+    ? CAVE_RESEARCH_DEFINITIONS[currentAction.researchId]
+    : null;
   return (
     <div className="view-stack">
       <section className="page-heading"><div><div className="eyebrow">A PLACE TO RETURN · 归处</div><h2>洞府</h2><p>石窟初成，灵气尚浅，但已经足够成为你在尘世中的一处归处。</p></div><div className="heading-stamp built">已筑</div></section>
@@ -1872,6 +1934,47 @@ const CaveView = ({ cave, inventory, sectId, injury, offlineLimitMinutes, onColl
                 <small>{unlocked ? cost : '对应建筑尚未达到三级'}</small>
                 <button className="secondary-button" disabled={!unlocked || exhausted || !affordable} onClick={() => onMastery(masteryId)}>
                   {exhausted ? '本世已达上限' : unlocked ? '主持劳作' : '尚未开放'}
+                </button>
+              </article>
+            );
+          })}
+        </div>
+      </section>
+      <section className="cave-research-section paper-card">
+        <div className="section-intro">
+          <div><span className="eyebrow">SCRIPTURE PAVILION · 藏经阁深处</span><h3>研究链：把旧事接起来</h3></div>
+          <span>{cave.research.completedIds.length} / {Object.keys(CAVE_RESEARCH_DEFINITIONS).length} 已完成</span>
+        </div>
+        <p>研究会占用一段完整行动时间，并消耗材料；完成后留下世界线索，死亡时其中的关键旁注还会变成下一世的回声。</p>
+        {activeResearch && <CurrentActionCard action={currentAction} now={now} />}
+        <div className="cave-research-grid">
+          {(Object.entries(CAVE_RESEARCH_DEFINITIONS) as Array<[CaveResearchId, (typeof CAVE_RESEARCH_DEFINITIONS)[CaveResearchId]]>).map(([researchId, research]) => {
+            const completed = cave.research.completedIds.includes(researchId);
+            const prerequisiteMet = !research.prerequisiteId || cave.research.completedIds.includes(research.prerequisiteId);
+            const pavilionReady = effects.pavilionLevel >= 3;
+            const affordable = inventory.spiritStones >= research.cost.spiritStones
+              && inventory.herbs >= research.cost.herbs
+              && inventory.techniqueFragments >= research.cost.techniqueFragments;
+            const available = pavilionReady && prerequisiteMet && !completed && affordable && !currentAction;
+            const status = completed
+              ? '已完成'
+              : !pavilionReady
+                ? '藏经阁三级开放'
+                : !prerequisiteMet
+                  ? `先完成「${CAVE_RESEARCH_DEFINITIONS[research.prerequisiteId!].label}」`
+                  : !affordable
+                    ? '材料不足'
+                    : currentAction
+                      ? '当前已有行动'
+                      : '可开始';
+            return (
+              <article className={`cave-research-card ${completed ? 'completed' : available ? 'available' : ''}`} key={researchId}>
+                <div className="cave-research-card-top"><div className="action-icon">{research.icon}</div><div><strong>{research.label}</strong><small>{research.durationMinutes} 分钟 · {status}</small></div></div>
+                <p>{research.summary}</p>
+                <small>{research.detail}</small>
+                <div className="research-cost">灵石 {research.cost.spiritStones} · 灵草 {research.cost.herbs} · 残页 {research.cost.techniqueFragments}</div>
+                <button className="secondary-button" disabled={!available} onClick={() => onStartResearch(researchId)}>
+                  {completed ? '研究已归档' : available ? '开始研究' : status}
                 </button>
               </article>
             );
@@ -1982,6 +2085,38 @@ const CodexView = ({ game }: { game: GameState }) => {
       <section className="codex-summary-grid">
         <article className="codex-summary-card paper-card"><div className="eyebrow">THE ENDING OF THIS LIFE · 本世结局</div><h3>{game.lifeSummary ? LIFE_ENDINGS[game.lifeSummary.endingId].label : game.character.name}</h3><p>{game.lifeSummary ? `第${game.lifeSummary.lifeNumber}世 · ${formatRealm(game.lifeSummary.realm.major, game.lifeSummary.realm.stage)} · 走过 ${game.lifeSummary.discoveredLocationCount} 处地点。` : '这一世还没有写到最后一页。寿元、选择和关系，仍在继续改变结局。'}</p>{game.lifeSummary ? <small>{LIFE_ENDINGS[game.lifeSummary.endingId].summary}</small> : <span className="discovered-mark">进行中</span>}</article>
         <article className="codex-summary-card paper-card"><div className="eyebrow">RELICS BETWEEN LIVES · 轮回遗泽</div><h3>{game.legacy.activeBoonId ? LEGACY_BOONS[game.legacy.activeBoonId].label : '前世留下的微光'}</h3><p>历世 {game.legacy.lifeCount} 世 · 已继承地点 {game.legacy.discoveredLocations.length} 处 · 遗留功法残页 {game.legacy.techniqueFragments} 页。</p><small>{game.legacy.activeBoonId ? LEGACY_BOONS[game.legacy.activeBoonId].effect : game.legacy.previousLifeNames.length > 0 ? `曾用名：${game.legacy.previousLifeNames.slice(-3).join('、')}` : '还没有前世姓名记录'}</small></article>
+      </section>
+
+      <section className="codex-section paper-card">
+        <div className="codex-section-heading"><div><div className="eyebrow">ECHOES BETWEEN LIVES · 轮回回响</div><h3>前世选择留下的刻印</h3></div><span>{game.legacy.storyMarks.length} / {Object.keys(LEGACY_STORY_MARKS).length} 已留下</span></div>
+        <div className="legacy-achievement-grid codex-achievement-grid">
+          {(Object.entries(LEGACY_STORY_MARKS) as Array<[LegacyStoryMarkId, (typeof LEGACY_STORY_MARKS)[LegacyStoryMarkId]]>).map(([markId, mark]) => {
+            const unlocked = game.legacy.storyMarks.includes(markId);
+            return <article className={`legacy-achievement-card ${unlocked ? 'unlocked' : ''}`} key={markId}>
+              <div className="legacy-achievement-mark">{unlocked ? '✓' : '·'}</div>
+              <div><strong>{unlocked ? mark.label : '尚未留下的回声'}</strong><p>{unlocked ? mark.summary : '这一世的某个选择，可能在下一世留下可回应的痕迹。'}</p><small>{unlocked ? mark.effect : '待终章结算后记录'}</small></div>
+            </article>;
+          })}
+        </div>
+      </section>
+
+      <section className="codex-section paper-card">
+        <div className="codex-section-heading"><div><div className="eyebrow">MARKS ACROSS LIVES · 轮回刻印</div><h3>跨世目标</h3></div><span>{game.legacy.achievementIds.length} / {Object.keys(LEGACY_ACHIEVEMENTS).length} 已完成</span></div>
+        <div className="legacy-achievement-grid codex-achievement-grid">
+          {(Object.entries(LEGACY_ACHIEVEMENTS) as Array<[LegacyAchievementId, (typeof LEGACY_ACHIEVEMENTS)[LegacyAchievementId]]>).map(([achievementId, achievement]) => {
+            const unlocked = game.legacy.achievementIds.includes(achievementId);
+            return <article className={`legacy-achievement-card ${unlocked ? 'unlocked' : ''}`} key={achievementId}>
+              <div className="legacy-achievement-mark">{unlocked ? '✓' : '·'}</div>
+              <div><strong>{achievement.label}</strong><p>{unlocked ? achievement.summary : achievement.requirement}</p><small>{achievement.reward}</small></div>
+            </article>;
+          })}
+        </div>
+        <div className="legacy-combination-tracker">
+          <div className="section-heading"><span>功法组合收集</span><small>{game.legacy.techniqueCombinationIds.length} / {TECHNIQUE_COMBINATIONS.length} 已记录</small></div>
+          <div className="codex-branch-list">
+            {TECHNIQUE_COMBINATIONS.map((combination) => <span className={game.legacy.techniqueCombinationIds.includes(combination.id) ? 'unlocked' : ''} key={combination.id}>{game.legacy.techniqueCombinationIds.includes(combination.id) ? '✓' : '·'} {combination.label}</span>)}
+          </div>
+        </div>
       </section>
     </div>
   );

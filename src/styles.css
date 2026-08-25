@@ -38,10 +38,23 @@
 .cave-mastery-card.unlocked { border-style: solid; opacity: 1; background: rgba(180, 139, 63, .05); }
 .cave-mastery-card p { flex: 1; margin: 0; color: var(--muted); line-height: 1.65; }
 .cave-mastery-card small { color: var(--red); }
+.cave-research-section { padding: 26px; background: linear-gradient(135deg, rgba(180,139,63,.08), rgba(248,242,232,.65)); }
+.cave-research-section > p { color: var(--muted); line-height: 1.75; }
+.cave-research-section .current-action-card { margin: 16px 0 0; }
+.cave-research-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 18px; }
+.cave-research-card { display: flex; flex-direction: column; gap: 9px; min-width: 0; padding: 18px; border: 1px solid var(--line); background: rgba(255,255,255,.25); opacity: .72; }
+.cave-research-card.available { opacity: 1; border-color: rgba(159,67,53,.35); background: rgba(159,67,53,.04); }
+.cave-research-card.completed { opacity: 1; border-color: #cbd7c1; background: #edf0e7; }
+.cave-research-card-top { display: flex; align-items: center; gap: 10px; }
+.cave-research-card-top strong { display: block; font-size: 14px; font-weight: 600; }
+.cave-research-card-top small { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; }
+.cave-research-card p { flex: 1; margin: 0; color: var(--muted); line-height: 1.65; font-size: 11px; }
+.cave-research-card > small { color: var(--green); font-size: 10px; line-height: 1.6; }
+.research-cost { color: var(--red); font: 10px Arial, sans-serif; line-height: 1.5; }
 
 @media (max-width: 650px) {
   .golden-core-card { align-items: stretch; flex-direction: column; }
-  .legacy-boon-options, .cave-mastery-grid { grid-template-columns: 1fr; }
+  .legacy-boon-options, .cave-mastery-grid, .cave-research-grid { grid-template-columns: 1fr; }
   .legacy-boon-option { min-height: 0; }
 }
 
@@ -554,6 +567,22 @@ button:disabled { cursor: not-allowed; }
 .legacy-box { display: flex; flex-direction: column; gap: 5px; margin-top: 12px; padding: 13px 14px; color: #53634b; background: #edf0e7; border: 1px solid #d3dbc8; }
 .legacy-box strong { font-size: 12px; font-weight: 600; }
 .legacy-box span { color: #6f7965; font-size: 10px; line-height: 1.6; }
+.legacy-achievement-panel { margin-top: 12px; padding: 14px; background: rgba(248,242,232,.45); border: 1px solid #dfd4c3; }
+.legacy-achievement-panel .section-heading { margin-bottom: 10px; }
+.legacy-achievement-panel .section-heading small { color: var(--gold); }
+.legacy-achievement-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.legacy-achievement-card { display: flex; align-items: flex-start; gap: 9px; min-width: 0; padding: 10px; color: var(--muted); background: rgba(255,255,255,.3); border: 1px solid rgba(142,111,70,.14); opacity: .65; }
+.legacy-achievement-card.unlocked { color: var(--ink); background: #edf0e7; border-color: #cbd7c1; opacity: 1; }
+.legacy-achievement-mark { width: 21px; height: 21px; flex: 0 0 21px; display: grid; place-items: center; color: var(--muted); border: 1px solid currentColor; font-size: 12px; }
+.legacy-achievement-card.unlocked .legacy-achievement-mark { color: var(--green); }
+.legacy-achievement-card strong { display: block; font-size: 11px; font-weight: 600; }
+.legacy-achievement-card p { margin: 5px 0 4px; color: var(--muted); font-size: 9px; line-height: 1.55; }
+.legacy-achievement-card small { display: block; color: var(--gold); font-size: 9px; line-height: 1.5; }
+.legacy-starting-bonuses { margin-top: 10px; color: var(--green); font-size: 10px; line-height: 1.6; }
+.legacy-combination-tracker { margin-top: 16px; padding-top: 13px; border-top: 1px solid rgba(142,111,70,.14); }
+.legacy-combination-tracker .section-heading { margin-bottom: 9px; }
+.legacy-combination-tracker .section-heading small { color: var(--gold); }
+.codex-achievement-grid { grid-template-columns: repeat(3, 1fr); }
 .next-life-heading { margin-top: 25px; text-align: center; }
 .next-life-heading h2 { color: var(--ink); font-size: 20px; font-weight: 500; letter-spacing: 3px; margin: 8px 0 0; }
 
@@ -576,6 +605,7 @@ button:disabled { cursor: not-allowed; }
   .cultivation-pulse-grid { grid-template-columns: repeat(2, 1fr); }
   .event-choice-grid, .relationship-grid, .sect-grid, .mission-grid, .exchange-grid { grid-template-columns: 1fr; }
   .codex-record-grid, .codex-technique-grid, .codex-summary-grid { grid-template-columns: 1fr; }
+  .codex-achievement-grid { grid-template-columns: repeat(2, 1fr); }
 }
 
 @media (max-width: 650px) {
@@ -616,6 +646,7 @@ button:disabled { cursor: not-allowed; }
   .school-grid, .technique-branch-grid, .technique-build-grid, .auxiliary-technique-grid { grid-template-columns: 1fr; }
   .technique-combination { align-items: stretch; flex-direction: column; }
   .event-choice-grid, .relationship-grid, .sect-grid, .mission-grid, .exchange-grid { grid-template-columns: 1fr; }
+  .legacy-achievement-grid, .codex-achievement-grid { grid-template-columns: 1fr; }
   .codex-overview, .codex-section-heading { flex-direction: column; gap: 9px; }
   .codex-overview-stat, .codex-section-heading > span { align-items: flex-start; }
   .codex-record-grid, .codex-technique-grid, .codex-summary-grid { grid-template-columns: 1fr; }

@@ -189,6 +189,28 @@ export const EXPLORATION_EVENTS: Record<ExplorationEventId, ExplorationEventDefi
       },
     ],
   },
+  'qingstone-inherited-bell': {
+    id: 'qingstone-inherited-bell',
+    locationId: 'qingstone-mountain',
+    title: '上一世的铃还在响',
+    eyebrow: 'LEGACY ECHO · 铃路旧痕',
+    summary: '你在旧树梢下听见熟悉的三声铃响。树上没有铜铃，只有一根已经褪色的红线，线下压着一张写给“取铃之人”的新纸条。',
+    condition: (state) => state.legacy.storyMarks.includes('bell-taken'),
+    choices: [
+      {
+        id: 'follow-inherited-bell',
+        label: '顺着铃声再走一段',
+        summary: '你没有急着寻找铜铃，而是跟着风里那条看不见的线走进山腹。旧路尽头的灵气替你稳住了一次吐纳。',
+        effects: { cultivation: 24, spiritSense: 2, mentalState: 3 },
+      },
+      {
+        id: 'leave-new-bell-note',
+        label: '给后来者留下回信',
+        summary: '你把这一世的名字写在纸条背面，放回红线下。山风卷走纸页，也留下几枚愿意被记住的灵石。',
+        effects: { spiritStones: 14, fortune: 2, karma: 2 },
+      },
+    ],
+  },
   'qingstone-fox-path': {
     id: 'qingstone-fox-path',
     locationId: 'qingstone-mountain',
@@ -311,6 +333,28 @@ export const EXPLORATION_EVENTS: Record<ExplorationEventId, ExplorationEventDefi
         label: '等风把答案吹出来',
         summary: '你在断碑旁坐到天色变暗，终于从风里听懂一段不完整的口诀，心境也因此沉了下来。',
         effects: { cultivation: 8, mentalState: 4, spiritSense: 1 },
+      },
+    ],
+  },
+  'blackwind-inherited-stele': {
+    id: 'blackwind-inherited-stele',
+    locationId: 'blackwind-valley',
+    title: '断碑记得你的手法',
+    eyebrow: 'LEGACY ECHO · 断碑复纹',
+    summary: '你再次来到黑风谷，断碑底部的三道凹痕已经被风砂磨平一半。可当你蹲下时，阵眼竟自动亮起，像在等待上一世未完的手势。',
+    condition: (state) => state.legacy.storyMarks.includes('stele-repaired'),
+    choices: [
+      {
+        id: 'finish-inherited-stele',
+        label: '补完上一世的阵纹',
+        summary: '你沿着记忆里并不属于这一世的手势落笔，断碑吐出一页完整的阵图，黑风谷也第一次安静下来。',
+        effects: { techniqueFragments: 3, spiritSense: 2, karma: 2, mentalState: -2 },
+      },
+      {
+        id: 'use-stele-as-landmark',
+        label: '把它留作路标',
+        summary: '你没有替断碑完成最后一笔，只在旁边刻下新的方向。风里回赠一小撮灵草，足够让这段路继续延伸。',
+        effects: { herbs: 3, fortune: 2, cultivation: 18 },
       },
     ],
   },
@@ -546,6 +590,50 @@ export const EXPLORATION_EVENTS: Record<ExplorationEventId, ExplorationEventDefi
     choices: [
       { id: 'answer-for-the-soul', label: '替残魂回应', summary: '你替那段没有主人认领的旧事应了一声，云中因果随之松开一个结。', effects: { karma: -2, cultivation: 32, mentalState: 3 } },
       { id: 'answer-as-yourself', label: '只报自己的名字', summary: '你没有替任何前尘作答。云海散开时，一道属于你自己的路出现在脚下。', effects: { fortune: 3, spiritSense: 2, cultivation: 20 } },
+    ],
+  },
+  'nameless-returning-name': {
+    id: 'nameless-returning-name',
+    locationId: 'nameless-well',
+    title: '井底还记得那个名字',
+    eyebrow: 'LEGACY ECHO · 替魂留名',
+    summary: '无名古井第一次主动叫住你。井底传来的不是这一世的名字，而是前世写在空白处、后来仍被保留下来的那个称呼。',
+    condition: (state) => state.legacy.storyMarks.includes('named-soul') || state.legacy.storyMarks.includes('annotated-soul'),
+    choices: [
+      {
+        id: 'answer-returning-name',
+        label: '回应那个名字',
+        summary: '你承认这段回声曾经属于你的选择。井底的寒意退开一些，像有人终于知道自己没有被遗忘。',
+        effects: { mentalState: 5, karma: 2, spiritSense: 2 },
+      },
+      {
+        id: 'write-name-in-ledger',
+        label: '把它写进长生簿',
+        summary: '你没有把名字带走，只把它郑重写入长生簿。纸页因此多出一行可供后来者继续追问的残注。',
+        effects: { techniqueFragments: 2, cultivation: 26, fortune: 2 },
+      },
+    ],
+  },
+  'nameless-unclaimed-letter': {
+    id: 'nameless-unclaimed-letter',
+    locationId: 'nameless-well',
+    title: '井沿放着一封无名信',
+    eyebrow: 'LEGACY ECHO · 守住无名',
+    summary: '井沿的石缝里藏着一封没有署名的信。信里没有责问你为何不替它命名，只说：有人记得不必等于有人占有。',
+    condition: (state) => state.legacy.storyMarks.includes('kept-soul-nameless'),
+    choices: [
+      {
+        id: 'keep-letter-unopened',
+        label: '尊重这封信的无名',
+        summary: '你没有拆开最后一层封纸，只把信放回井沿。无名古井送出一阵平稳灵气，替你护住了心神。',
+        effects: { mentalState: 8, fortune: 3, cultivation: 20 },
+      },
+      {
+        id: 'read-letter-aloud',
+        label: '把信读给井底听',
+        summary: '你读完信上的每一行，却没有替它补上名字。井底回以一页残卷，像是在说理解不必以占有为代价。',
+        effects: { techniqueFragments: 3, spiritSense: 2, karma: 2 },
+      },
     ],
   },
 };

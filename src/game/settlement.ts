@@ -16,6 +16,7 @@ import {
   getOfflineLimitMinutes,
   settleCave,
 } from './cave';
+import { getCaveResearch } from './caveResearch';
 import {
   EXPLORATION_LOCATIONS,
   getExplorationEvent,
@@ -42,7 +43,7 @@ import {
   SECTS,
   SECT_POSITIONS,
 } from './people';
-import { getGoldenCoreEnding, LIFE_ENDINGS } from './legacy';
+import { getGoldenCoreEnding, LIFE_ENDINGS, recordLegacyProgress } from './legacy';
 import { createLedgerEntry } from './save';
 import {
   CULTIVATION_SCHOOLS,
@@ -58,6 +59,7 @@ import {
 } from './techniques';
 import type {
   ActionType,
+  CaveResearchId,
   CultivationSchoolId,
   ExplorationEventId,
   ExplorationLocationId,
@@ -236,6 +238,13 @@ const getNextExplorationEvent = (
 
   const eventChance = state.completedExplorationEventIds.length === 0
     ? 1
+    : availableEvents.some((event) =>
+      event.id === 'qingstone-inherited-bell' ||
+      event.id === 'blackwind-inherited-stele' ||
+      event.id === 'nameless-returning-name' ||
+      event.id === 'nameless-unclaimed-letter'
+    )
+      ? 1
     : hasTalent(state, 'solitary-star')
       ? 0.75
       : 0.45;
@@ -279,22 +288,29 @@ const endLife = (
   state.lifeStatus = 'dead';
   state.lifeSummary = summary;
   state.pastLives = [...(state.pastLives ?? []), summary].slice(-20);
-  state.legacy = {
-    lifeCount: lifeNumber,
-    discoveredLocations: Array.from(new Set([
-      ...(state.legacy?.discoveredLocations ?? []),
-      ...state.discoveredLocations.filter(
+  state.legacy = recordLegacyProgress(
+    {
+      ...state.legacy,
+      lifeCount: lifeNumber,
+      techniqueFragments: Math.min(3, Math.max(0, state.inventory.techniqueFragments)),
+      previousLifeNames: [...(state.legacy?.previousLifeNames ?? []), character.name].slice(-20),
+      activeBoonId: state.legacy?.activeBoonId ?? null,
+    },
+    {
+      endingId,
+      deathReason,
+      discoveredLocations: state.discoveredLocations.filter(
         (locationId): locationId is ExplorationLocationId =>
           locationId === 'qingstone-mountain' ||
           locationId === 'blackwind-valley' ||
           locationId === 'nameless-well' ||
           locationId === 'cloudbreak-ridge',
       ),
-    ])),
-    techniqueFragments: Math.min(3, Math.max(0, state.inventory.techniqueFragments)),
-    previousLifeNames: [...(state.legacy?.previousLifeNames ?? []), character.name].slice(-20),
-    activeBoonId: state.legacy?.activeBoonId ?? null,
-  };
+      sectId: state.social.sect.sectId,
+      techniqueCombinationId: getTechniqueCombination(state.cultivationPath)?.id ?? null,
+      storyWorldFlags: state.story.worldFlags,
+    },
+  );
   character.currentAction = null;
   state.pendingExplorationEvent = null;
   state.social.pendingPersonEvent = null;
@@ -447,6 +463,50 @@ const ACTION_PLAN_NOTES: Record<ActionType, readonly string[]> = {
     '丹田中的灵气已经无处再去。你没有继续堆叠修为，而是回头整理这一世真正留下的东西。',
     '长生簿翻到一页从未写过的空白。你知道，接下来凝成的不只是金丹，也是这一世的结局。',
   ],
+  cave_research: [
+    '你把藏经阁里的残页按山河、人物与天象重新分栏，准备让一条断掉很久的研究链重新接上。',
+    '这次闭关不追求立刻增长修为。你要做的是把前人留下的空白整理成可以继续追问的问题。',
+    '灯火压低后，藏经阁只剩纸页翻动的声音。你决定耐心追查那些彼此呼应、却还没有答案的旧注。',
+  ],
+};
+
+const resolveCaveResearch = (
+  state: GameState,
+  completedAt: number,
+) => {
+  const researchId = state.character.currentAction?.researchId;
+  const research = getCaveResearch(researchId);
+  if (!research) return [];
+
+  state.cave.research.completedIds = Array.from(new Set([
+    ...(state.cave.research.completedIds ?? []),
+    research.id,
+  ]));
+  if (!state.story.worldFlags.includes(research.flag)) {
+    state.story.worldFlags.push(research.flag);
+  }
+
+  const changes: string[] = [];
+  if (research.id === 'trace-atlas') {
+    state.inventory.techniqueFragments += 2;
+    changes.push('功法残页 +2');
+  }
+  if (research.id === 'soul-annotation') {
+    state.character.attributes.spiritSense += 2;
+    changes.push('神识 +2');
+  }
+  if (research.id === 'omen-calendar') {
+    state.character.attributes.fortune += 2;
+    changes.push('气运 +2');
+  }
+  changes.push('研究链推进', research.id === 'soul-annotation' ? '可形成轮回刻印' : '后续研究已解锁');
+  return [createLedgerEntry(
+    'action',
+    `${research.label}完成`,
+    research.result,
+    changes,
+    completedAt,
+  )];
 };
 
 const CAVE_PRODUCTION_RESULTS = [
@@ -571,6 +631,9 @@ const actionResult = (
   if (actionType === 'golden_core_ordeal') {
     const endingId = getGoldenCoreEnding(state);
     return [endLife(state, 'golden_core_quest', completedAt, endingId)];
+  }
+  if (actionType === 'cave_research') {
+    return resolveCaveResearch(state, completedAt);
   }
 
   const { character, inventory } = state;
@@ -983,7 +1046,13 @@ export const settleGame = (
     techniqueFragments: 0,
     previousLifeNames: [],
     activeBoonId: null,
+    completedEndingIds: [],
+    visitedSectIds: [],
+    techniqueCombinationIds: [],
+    achievementIds: [],
+    storyMarks: [],
   };
+  state.legacy.storyMarks = state.legacy.storyMarks ?? [];
   if (state.lifeStatus === 'dead') {
     return { state, newEntries: [] };
   }
@@ -994,6 +1063,7 @@ export const settleGame = (
   state.lastExplorationEventId = state.lastExplorationEventId ?? null;
   state.story = state.story ?? createStoryState();
   state.cave = state.cave ?? createCave(now);
+  state.cave.research = state.cave.research ?? { completedIds: [] };
   const newEntries: LedgerEntry[] = [];
   const elapsedMs = now - state.lastSettledAt;
 
@@ -1222,6 +1292,7 @@ export const getActionStartError = (
   locationId: ExplorationLocationId = 'qingstone-mountain',
   missionId?: SectMissionId,
   now = Date.now(),
+  researchId?: CaveResearchId,
 ) => {
   if (type === 'breakthrough') return getBreakthroughStartError(input, now);
   if (input.lifeStatus === 'dead') return '本世已经结束，不能再安排行动。';
@@ -1252,6 +1323,24 @@ export const getActionStartError = (
       return `叩问金丹需要灵石 ${GOLDEN_CORE_ORDEAL_COST.spiritStones}、灵草 ${GOLDEN_CORE_ORDEAL_COST.herbs}、功法残页 ${GOLDEN_CORE_ORDEAL_COST.techniqueFragments}。`;
     }
   }
+  if (type === 'cave_research') {
+    const research = getCaveResearch(researchId);
+    const completedResearchIds = input.cave.research?.completedIds ?? [];
+    if (!input.cave.unlocked) return '先完成一次探索，找到并修复洞府，才能整理藏经阁。';
+    if (input.cave.buildings['scripture-pavilion'].level < 3) return '藏经阁达到三级后，才能展开深层研究。';
+    if (!research) return '这条研究线索尚未记录在藏经阁中。';
+    if (completedResearchIds.includes(research.id)) return '这条研究已经完成，不必重复抄录。';
+    if (research.prerequisiteId && !completedResearchIds.includes(research.prerequisiteId)) {
+      return `请先完成「${getCaveResearch(research.prerequisiteId)?.label ?? '前置研究'}」。`;
+    }
+    if (
+      input.inventory.spiritStones < research.cost.spiritStones ||
+      input.inventory.herbs < research.cost.herbs ||
+      input.inventory.techniqueFragments < research.cost.techniqueFragments
+    ) {
+      return `研究「${research.label}」需要灵石 ${research.cost.spiritStones}、灵草 ${research.cost.herbs}、功法残页 ${research.cost.techniqueFragments}。`;
+    }
+  }
   if (type === 'technique_swap') {
     if (input.character.realm.major !== 'foundation_establishment') {
       return '筑基之后才能同时驾驭两门功法。';
@@ -1280,15 +1369,18 @@ export const startAction = (
   missionId?: SectMissionId,
   random: RandomSource = Math.random,
   plannedMinutes = 0,
+  researchId?: CaveResearchId,
 ): GameState => {
   const state = structuredClone(input);
-  if (getActionStartError(state, type, locationId, missionId, now)) return state;
+  if (getActionStartError(state, type, locationId, missionId, now, researchId)) return state;
 
   const selectedLocationId = state.discoveredLocations.includes(locationId)
     ? locationId
     : 'qingstone-mountain';
   const selectedLocation = type === 'explore' ? getExplorationLocation(selectedLocationId) : null;
-  const cycleDurationMinutes = getActionDurationMinutes(type, state.cave, selectedLocationId, state.social?.sect?.sectId ?? null, missionId);
+  const cycleDurationMinutes = type === 'cave_research'
+    ? getCaveResearch(researchId)?.durationMinutes ?? ACTIONS[type].durationMinutes
+    : getActionDurationMinutes(type, state.cave, selectedLocationId, state.social?.sect?.sectId ?? null, missionId);
   const plannedCycles = isContinuousAction(type) && plannedMinutes > cycleDurationMinutes
     ? Math.max(1, Math.floor(plannedMinutes / cycleDurationMinutes))
     : 1;
@@ -1308,15 +1400,17 @@ export const startAction = (
     } : {}),
     ...(type === 'explore' ? { locationId: selectedLocationId } : {}),
     ...(type === 'sect_mission' && missionId ? { missionId } : {}),
+    ...(type === 'cave_research' && researchId ? { researchId } : {}),
   };
   state.lastSettledAt = now;
   state.ledger = [
     createLedgerEntry(
       'system',
       `已安排：${ACTIONS[type].label}`,
-      `${choose(ACTION_PLAN_NOTES[type])}${selectedLocation ? `${selectedLocation.label}：${selectedLocation.summary}` : ACTIONS[type].description}${plannedCycles > 1 ? `已经安排连续 ${plannedCycles} 轮，预计修行 ${formatPlanDuration(durationMinutes)}；触及关隘或伤势过重时会提前出关。` : `预计在 ${durationMinutes} 分钟后完成。`}你可以关闭网页，回来时查看结果。`,
+      `${choose(ACTION_PLAN_NOTES[type])}${selectedLocation ? `${selectedLocation.label}：${selectedLocation.summary}` : getCaveResearch(researchId)?.summary ?? ACTIONS[type].description}${plannedCycles > 1 ? `已经安排连续 ${plannedCycles} 轮，预计修行 ${formatPlanDuration(durationMinutes)}；触及关隘或伤势过重时会提前出关。` : `预计在 ${durationMinutes} 分钟后完成。`}你可以关闭网页，回来时查看结果。`,
       [
         ACTIONS[type].label,
+        getCaveResearch(researchId)?.label ?? '',
         selectedLocation?.risk ?? ACTIONS[type].risk,
         plannedCycles > 1 ? `连续 ${plannedCycles} 轮` : '',
       ].filter(Boolean),
@@ -1325,6 +1419,34 @@ export const startAction = (
     ...state.ledger,
   ].slice(0, 100);
   return state;
+};
+
+export const startCaveResearch = (
+  input: GameState,
+  researchId: CaveResearchId,
+  now = Date.now(),
+  random: RandomSource = Math.random,
+): TechniqueMutationResult => {
+  const state = structuredClone(input);
+  state.cave.research = state.cave.research ?? { completedIds: [] };
+  const error = getActionStartError(state, 'cave_research', 'qingstone-mountain', undefined, now, researchId);
+  if (error) return { state, newEntries: [], error };
+  const research = getCaveResearch(researchId);
+  if (!research) return { state, newEntries: [], error: '这条研究线索尚未记录在藏经阁中。' };
+  const started = startAction(state, 'cave_research', now, 'qingstone-mountain', undefined, random, 0, researchId);
+  started.inventory.spiritStones -= research.cost.spiritStones;
+  started.inventory.herbs -= research.cost.herbs;
+  started.inventory.techniqueFragments -= research.cost.techniqueFragments;
+  const entry = started.ledger[0];
+  if (entry) {
+    entry.tags.push(
+      `灵石 -${research.cost.spiritStones}`,
+      `灵草 -${research.cost.herbs}`,
+      `功法残页 -${research.cost.techniqueFragments}`,
+      `耗时 ${research.durationMinutes} 分钟`,
+    );
+  }
+  return { state: started, newEntries: entry ? [entry] : [] };
 };
 
 export type BreakthroughMutationResult = SettlementResult & {

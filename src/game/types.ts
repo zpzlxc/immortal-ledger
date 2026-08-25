@@ -1,4 +1,4 @@
-export type ActionType = 'meditate' | 'temper' | 'insight' | 'overdrive' | 'explore' | 'study' | 'sect_mission' | 'breakthrough' | 'foundation_trial' | 'technique_swap' | 'golden_core_ordeal';
+export type ActionType = 'meditate' | 'temper' | 'insight' | 'overdrive' | 'explore' | 'study' | 'sect_mission' | 'breakthrough' | 'foundation_trial' | 'technique_swap' | 'golden_core_ordeal' | 'cave_research';
 
 export type ExplorationLocationId = 'qingstone-mountain' | 'blackwind-valley' | 'nameless-well' | 'cloudbreak-ridge';
 
@@ -20,7 +20,11 @@ export type ExplorationEventId =
   | 'nameless-true-name'
   | 'cloudbreak-stone-gate'
   | 'cloudbreak-red-thread'
-  | 'cloudbreak-name-echo';
+  | 'cloudbreak-name-echo'
+  | 'qingstone-inherited-bell'
+  | 'blackwind-inherited-stele'
+  | 'nameless-returning-name'
+  | 'nameless-unclaimed-letter';
 
 export type PendingExplorationEvent = {
   eventId: ExplorationEventId;
@@ -162,6 +166,7 @@ export type CurrentAction = {
   };
   locationId?: ExplorationLocationId;
   missionId?: SectMissionId;
+  researchId?: CaveResearchId;
 };
 
 export type InjurySource = 'overdrive' | 'exploration' | 'sect_mission';
@@ -198,6 +203,14 @@ export type LifeStatus = 'alive' | 'dead';
 
 export type DeathReason = 'lifespan_exhausted' | 'fatal_injury' | 'golden_core_quest';
 
+export type TechniqueCombinationId =
+  | 'sword-formation-resonance'
+  | 'alchemy-soul-resonance'
+  | 'sword-soul-conflict'
+  | 'sword-alchemy-resonance'
+  | 'alchemy-formation-conflict'
+  | 'formation-soul-resonance';
+
 export type LifeEndingId =
   | 'unfinished-page'
   | 'fell-on-the-path'
@@ -208,6 +221,20 @@ export type LifeEndingId =
   | 'solitary-golden-core';
 
 export type LegacyBoonId = 'old-friend-echo' | 'cave-ember' | 'long-watch-mark';
+
+export type LegacyAchievementId =
+  | 'first-golden-core'
+  | 'all-locations'
+  | 'three-sects'
+  | 'six-technique-pairs'
+  | 'all-golden-endings';
+
+export type LegacyStoryMarkId =
+  | 'bell-taken'
+  | 'stele-repaired'
+  | 'named-soul'
+  | 'kept-soul-nameless'
+  | 'annotated-soul';
 
 export type LifeSummary = {
   lifeNumber: number;
@@ -230,6 +257,11 @@ export type LegacyState = {
   techniqueFragments: number;
   previousLifeNames: string[];
   activeBoonId: LegacyBoonId | null;
+  completedEndingIds: LifeEndingId[];
+  visitedSectIds: SectId[];
+  techniqueCombinationIds: TechniqueCombinationId[];
+  achievementIds: LegacyAchievementId[];
+  storyMarks: LegacyStoryMarkId[];
 };
 
 export type LedgerEntry = {
@@ -263,6 +295,12 @@ export type CaveMasteryState = {
   mergedScriptDeductions: number;
 };
 
+export type CaveResearchId = 'trace-atlas' | 'soul-annotation' | 'omen-calendar';
+
+export type CaveResearchState = {
+  completedIds: CaveResearchId[];
+};
+
 export type CaveState = {
   unlocked: boolean;
   lastSettledAt: number;
@@ -272,6 +310,7 @@ export type CaveState = {
   };
   buildings: Record<CaveBuildingId, CaveBuilding>;
   mastery: CaveMasteryState;
+  research: CaveResearchState;
 };
 
 export type GameState = {

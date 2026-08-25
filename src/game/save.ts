@@ -1,7 +1,9 @@
 import { SAVE_KEY, TALENTS } from './content';
 import { createCave } from './cave';
+import { CAVE_RESEARCH_DEFINITIONS } from './caveResearch';
 import { EXPLORATION_EVENTS } from './exploration';
 import { normalizeInjury } from './injury';
+import { getLegacyStartingBonuses } from './legacy';
 import { createSocialState, PERSON_EVENTS, RELATIONSHIPS, SECTS, getRelationshipStatus } from './people';
 import {
   createCultivationPath,
@@ -16,18 +18,23 @@ import type {
   ExplorationLocationId,
   GameState,
   LedgerEntry,
+  LegacyAchievementId,
   LegacyBoonId,
+  LegacyStoryMarkId,
   LegacyState,
   LifeEndingId,
   LifeSummary,
   PersonEventId,
   Realm,
+  SectId,
   SectPositionId,
+  TechniqueCombinationId,
   TechniqueId,
+  CaveResearchId,
 } from './types';
 import { createStoryState, normalizeStoryState } from './story';
 
-export const CURRENT_SCHEMA_VERSION = 15;
+export const CURRENT_SCHEMA_VERSION = 17;
 
 const createId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -47,9 +54,37 @@ export const createLegacyState = (): LegacyState => ({
   techniqueFragments: 0,
   previousLifeNames: [],
   activeBoonId: null,
+  completedEndingIds: [],
+  visitedSectIds: [],
+  techniqueCombinationIds: [],
+  achievementIds: [],
+  storyMarks: [],
 });
 
 const LEGACY_BOON_IDS: LegacyBoonId[] = ['old-friend-echo', 'cave-ember', 'long-watch-mark'];
+const LEGACY_ACHIEVEMENT_IDS: LegacyAchievementId[] = [
+  'first-golden-core',
+  'all-locations',
+  'three-sects',
+  'six-technique-pairs',
+  'all-golden-endings',
+];
+const LEGACY_STORY_MARK_IDS: LegacyStoryMarkId[] = [
+  'bell-taken',
+  'stele-repaired',
+  'named-soul',
+  'kept-soul-nameless',
+  'annotated-soul',
+];
+const CAVE_RESEARCH_IDS: CaveResearchId[] = Object.keys(CAVE_RESEARCH_DEFINITIONS) as CaveResearchId[];
+const TECHNIQUE_COMBINATION_IDS: TechniqueCombinationId[] = [
+  'sword-formation-resonance',
+  'alchemy-soul-resonance',
+  'sword-soul-conflict',
+  'sword-alchemy-resonance',
+  'alchemy-formation-conflict',
+  'formation-soul-resonance',
+];
 const LIFE_ENDING_IDS: LifeEndingId[] = [
   'unfinished-page',
   'fell-on-the-path',
@@ -74,6 +109,26 @@ const normalizeLegacyState = (input?: Partial<LegacyState>): LegacyState => ({
   activeBoonId: LEGACY_BOON_IDS.includes(input?.activeBoonId as LegacyBoonId)
     ? input?.activeBoonId as LegacyBoonId
     : null,
+  completedEndingIds: Array.from(new Set(
+    (Array.isArray(input?.completedEndingIds) ? input.completedEndingIds : [])
+      .filter((endingId): endingId is LifeEndingId => LIFE_ENDING_IDS.includes(endingId as LifeEndingId)),
+  )),
+  visitedSectIds: Array.from(new Set(
+    (Array.isArray(input?.visitedSectIds) ? input.visitedSectIds : [])
+      .filter((sectId): sectId is SectId => sectId in SECTS),
+  )),
+  techniqueCombinationIds: Array.from(new Set(
+    (Array.isArray(input?.techniqueCombinationIds) ? input.techniqueCombinationIds : [])
+      .filter((combinationId): combinationId is TechniqueCombinationId => TECHNIQUE_COMBINATION_IDS.includes(combinationId as TechniqueCombinationId)),
+  )),
+  achievementIds: Array.from(new Set(
+    (Array.isArray(input?.achievementIds) ? input.achievementIds : [])
+      .filter((achievementId): achievementId is LegacyAchievementId => LEGACY_ACHIEVEMENT_IDS.includes(achievementId as LegacyAchievementId)),
+  )),
+  storyMarks: Array.from(new Set(
+    (Array.isArray(input?.storyMarks) ? input.storyMarks : [])
+      .filter((mark): mark is LegacyStoryMarkId => LEGACY_STORY_MARK_IDS.includes(mark as LegacyStoryMarkId)),
+  )),
 });
 
 const normalizeRealm = (input?: Partial<Realm>): Realm => {
@@ -143,6 +198,7 @@ export const createNewGame = (
     .map((id) => TALENTS.find((talent) => talent.id === id))
     .filter((talent): talent is (typeof TALENTS)[number] => Boolean(talent));
   const legacy = normalizeLegacyState(legacyInput);
+  const startingBonuses = getLegacyStartingBonuses(legacy);
   const discoveredLocations = Array.from(new Set([
     'qingstone-mountain' as const,
     ...legacy.discoveredLocations,
@@ -199,9 +255,9 @@ export const createNewGame = (
       breakthroughCooldownUntil: null,
     },
     inventory: {
-      spiritStones: 30,
-      herbs: 3,
-      techniqueFragments: legacy.techniqueFragments,
+      spiritStones: 30 + startingBonuses.spiritStones,
+      herbs: 3 + startingBonuses.herbs,
+      techniqueFragments: legacy.techniqueFragments + startingBonuses.techniqueFragments,
       healingPills: 0,
     },
     cave: createCave(now),
@@ -314,6 +370,14 @@ export const normalizeGameState = (input: GameState): GameState => {
     mastery: {
       ...initialCave.mastery,
       ...(cave.mastery ?? {}),
+    },
+    research: {
+      ...initialCave.research,
+      ...(cave.research ?? {}),
+      completedIds: Array.from(new Set(
+        (Array.isArray(cave.research?.completedIds) ? cave.research.completedIds : [])
+          .filter((researchId): researchId is CaveResearchId => CAVE_RESEARCH_IDS.includes(researchId as CaveResearchId)),
+      )),
     },
   };
 

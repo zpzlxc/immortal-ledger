@@ -2,6 +2,7 @@ import type {
   CultivationPathState,
   CultivationSchoolId,
   TechniqueBranchId,
+  TechniqueCombinationId,
   TechniqueId,
   TechniqueProgress,
 } from './types';
@@ -43,14 +44,6 @@ export type TechniqueDefinition = {
   auxiliaryEffects: Partial<TechniqueEffectBonuses>;
   branches: TechniqueBranch[];
 };
-
-export type TechniqueCombinationId =
-  | 'sword-formation-resonance'
-  | 'alchemy-soul-resonance'
-  | 'sword-soul-conflict'
-  | 'sword-alchemy-resonance'
-  | 'alchemy-formation-conflict'
-  | 'formation-soul-resonance';
 
 export type TechniqueCombination = {
   id: TechniqueCombinationId;

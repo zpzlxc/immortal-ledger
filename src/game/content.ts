@@ -126,6 +126,13 @@ export const ACTIONS: Record<
     description: '以这一世的功法、因果与人间牵挂叩问金丹，写下本世真正的终章。',
     risk: '终局：行动完成后本世结束，并形成可继承的道途结局',
   },
+  cave_research: {
+    label: '藏经阁研究',
+    icon: '研',
+    durationMinutes: 45,
+    description: '消耗资源整理藏经阁中的残卷，沿着一条可持续推进的研究链寻找旧日线索。',
+    risk: '风险：不消耗寿元，但研究期间不能安排其他行动',
+  },
 };
 
 export const REAL_MINUTE_TO_GAME_DAYS = 0.5;

@@ -47,12 +47,20 @@ describe('save parsing', () => {
     state.schemaVersion = 11;
     delete state.story;
     if (state.inventory) delete (state.inventory as Partial<typeof state.inventory>).healingPills;
+    if (state.legacy) delete (state.legacy as Partial<typeof state.legacy>).storyMarks;
+    if (state.cave) delete (state.cave as Partial<typeof state.cave>).research;
 
     const parsed = parseSaveText(JSON.stringify(state));
 
     expect(parsed.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
     expect(parsed.story.choiceHistory).toEqual([]);
     expect(parsed.inventory.healingPills).toBe(0);
+    expect(parsed.legacy.completedEndingIds).toEqual([]);
+    expect(parsed.legacy.visitedSectIds).toEqual([]);
+    expect(parsed.legacy.techniqueCombinationIds).toEqual([]);
+    expect(parsed.legacy.achievementIds).toEqual([]);
+    expect(parsed.legacy.storyMarks).toEqual([]);
+    expect(parsed.cave.research).toEqual({ completedIds: [] });
   });
 
   it('keeps a legacy main technique and initializes the auxiliary slot', () => {

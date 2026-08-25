@@ -78,6 +78,9 @@ export const createCave = (now = Date.now(), unlocked = false): CaveState => ({
     yearsHerbRituals: 0,
     mergedScriptDeductions: 0,
   },
+  research: {
+    completedIds: [],
+  },
 });
 
 export const getUpgradeCost = (buildingId: CaveBuildingId, nextLevel: number) => {

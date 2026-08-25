@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { performCaveMastery } from './caveActions';
 import { getOfflineLimitMinutes } from './cave';
-import { getGoldenCoreEnding } from './legacy';
+import { getGoldenCoreEnding, recordLegacyProgress } from './legacy';
+import { EXPLORATION_EVENTS } from './exploration';
 import { createNewGame, startNextLife } from './save';
-import { getActionStartError, settleGame, startGoldenCoreOrdeal } from './settlement';
+import { getActionStartError, settleGame, startCaveResearch, startGoldenCoreOrdeal } from './settlement';
 import { TECHNIQUE_COMBINATIONS, createTechniqueProgress, TECHNIQUE_DEFINITIONS } from './techniques';
 
 const MINUTE_MS = 60_000;
@@ -45,6 +46,27 @@ describe('long-term progression', () => {
     expect(settled.state.lifeSummary?.deathReason).toBe('golden_core_quest');
     expect(settled.state.lifeSummary?.endingId).toBe('dual-path-core');
     expect(settled.state.social.pendingPersonEvent).toBeNull();
+    expect(settled.state.legacy.completedEndingIds).toContain('dual-path-core');
+    expect(settled.state.legacy.techniqueCombinationIds).toContain('sword-formation-resonance');
+    expect(settled.state.legacy.achievementIds).toContain('first-golden-core');
+  });
+
+  it('records cross-life achievements and applies their small next-life rewards', () => {
+    const legacy = createGoldenCoreCandidate().legacy;
+    legacy.achievementIds = [
+      'first-golden-core',
+      'all-locations',
+      'three-sects',
+      'all-golden-endings',
+    ];
+
+    const nextLife = createNewGame('留痕', [], legacy, [], now);
+
+    expect(nextLife.inventory).toMatchObject({
+      spiritStones: 35,
+      herbs: 4,
+      techniqueFragments: 1,
+    });
   });
 
   it('requires trials and endgame resources before the golden-core ordeal', () => {
@@ -133,5 +155,45 @@ describe('long-term progression', () => {
     const settled = settleGame(state, now + 20 * 60 * MINUTE_MS, () => 0.99).state;
 
     expect(settled.cave.stored.cultivation).toBe(40);
+  });
+
+  it('turns a maxed scripture pavilion into a staged research chain', () => {
+    const state = createNewGame('藏卷', [], undefined, [], now);
+    state.cave.unlocked = true;
+    state.cave.buildings['scripture-pavilion'].level = 3;
+    state.inventory = { spiritStones: 100, herbs: 20, techniqueFragments: 12, healingPills: 0 };
+
+    const started = startCaveResearch(state, 'trace-atlas', now).state;
+    expect(started.inventory).toMatchObject({ spiritStones: 82, herbs: 18, techniqueFragments: 10 });
+    expect(started.character.currentAction).toMatchObject({ type: 'cave_research', researchId: 'trace-atlas' });
+
+    const completed = settleGame(started, now + 45 * MINUTE_MS, () => 0.99).state;
+    expect(completed.cave.research.completedIds).toContain('trace-atlas');
+    expect(completed.story.worldFlags).toContain('cave-research:trace-atlas');
+    expect(completed.inventory.techniqueFragments).toBe(12);
+    expect(getActionStartError(completed, 'cave_research', 'qingstone-mountain', undefined, now, 'soul-annotation')).toBeNull();
+  });
+
+  it('carries meaningful choices into next-life exploration conditions', () => {
+    const base = createNewGame('留名', [], undefined, [], now).legacy;
+    const marked = recordLegacyProgress(base, {
+      endingId: 'unfinished-page',
+      deathReason: 'lifespan_exhausted',
+      discoveredLocations: ['qingstone-mountain', 'blackwind-valley', 'nameless-well'],
+      sectId: null,
+      techniqueCombinationId: null,
+      storyWorldFlags: [
+        'exploration:qingstone-red-bell:climb-for-bell',
+        'exploration:blackwind-broken-stele:read-the-stele',
+        'person:nameless-well-ending:give-the-soul-a-name',
+        'cave-research:soul-annotation',
+      ],
+    });
+    const nextLife = createNewGame('回声', [], marked, [], now);
+
+    expect(nextLife.legacy.storyMarks).toEqual(expect.arrayContaining(['bell-taken', 'stele-repaired', 'named-soul', 'annotated-soul']));
+    expect(EXPLORATION_EVENTS['qingstone-inherited-bell'].condition?.(nextLife)).toBe(true);
+    expect(EXPLORATION_EVENTS['blackwind-inherited-stele'].condition?.(nextLife)).toBe(true);
+    expect(EXPLORATION_EVENTS['nameless-returning-name'].condition?.(nextLife)).toBe(true);
   });
 });
