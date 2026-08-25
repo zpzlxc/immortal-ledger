@@ -1,4 +1,4 @@
-export type ActionType = 'meditate' | 'temper' | 'insight' | 'overdrive' | 'explore' | 'study' | 'sect_mission' | 'breakthrough' | 'foundation_trial' | 'technique_swap' | 'golden_core_ordeal' | 'cave_research';
+export type ActionType = 'meditate' | 'temper' | 'insight' | 'overdrive' | 'explore' | 'study' | 'sect_mission' | 'breakthrough' | 'foundation_trial' | 'technique_swap' | 'golden_core_ordeal' | 'cave_research' | 'person_interaction';
 
 export type ExplorationLocationId = 'qingstone-mountain' | 'blackwind-valley' | 'nameless-well' | 'cloudbreak-ridge';
 
@@ -65,6 +65,7 @@ export type CultivationPathState = {
 
 export type RelationshipId = 'lin-qiu' | 'xuan-song' | 'nameless-soul';
 export type RelationshipStatus = '陌生' | '熟悉' | '信任' | '敌对';
+export type PersonInteractionId = 'visit' | 'consult' | 'trade' | 'entrust';
 
 export type RelationshipState = {
   affinity: number;
@@ -167,6 +168,8 @@ export type CurrentAction = {
   locationId?: ExplorationLocationId;
   missionId?: SectMissionId;
   researchId?: CaveResearchId;
+  relationshipId?: RelationshipId;
+  interactionId?: PersonInteractionId;
 };
 
 export type InjurySource = 'overdrive' | 'exploration' | 'sect_mission';

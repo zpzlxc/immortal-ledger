@@ -42,6 +42,7 @@ import {
   getSectRank,
   getSectPosition,
   PERSON_EVENTS,
+  PERSON_INTERACTIONS,
   RELATIONSHIPS,
   SECT_EXCHANGES,
   SECTS,
@@ -73,6 +74,7 @@ import type {
   SectId,
   SectExchangeId,
   SectMissionId,
+  PersonInteractionId,
   Talent,
   TechniqueId,
 } from './game/types';
@@ -107,6 +109,7 @@ import {
   startTechniqueSwap,
   startAction,
   startCaveResearch,
+  startPersonInteraction,
   treatInjury,
   upgradeCaveBuilding,
 } from './game/settlement';
@@ -355,6 +358,20 @@ const App = () => {
     setGame(result.state);
     setErrorMessage(result.error ?? '');
     setNotice([...settled.newEntries, ...result.newEntries]);
+  };
+
+  const handleStartPersonInteraction = (relationshipId: keyof GameState['social']['relationships'], interactionId: PersonInteractionId) => {
+    if (!game || game.character.currentAction) return;
+    const settledAt = Date.now();
+    const settled = settleGame(game, settledAt);
+    captureOfflineSummary(game, settled.state, settledAt);
+    const result = startPersonInteraction(settled.state, relationshipId, interactionId, settledAt);
+    saveGame(result.state);
+    setGame(result.state);
+    setErrorMessage(result.error ?? '');
+    if (settled.newEntries.length > 0 || result.newEntries.length > 0) {
+      setNotice([...settled.newEntries, ...result.newEntries]);
+    }
   };
 
   const handleResolveExplorationEvent = (choiceId: string) => {
@@ -789,9 +806,11 @@ const App = () => {
           {activeTab === 'people' && (
             <PeopleView
               social={game.social}
+              spiritStones={game.inventory.spiritStones}
               now={now}
               currentAction={game.character.currentAction}
               onResolveEvent={handleResolvePersonEvent}
+              onStartInteraction={handleStartPersonInteraction}
               onJoinSect={handleJoinSect}
               onStartMission={handleStartSectMission}
               onExchangeReputation={handleExchangeReputation}
@@ -1165,6 +1184,12 @@ const CurrentActionCard = ({ action, now }: { action: GameState['character']['cu
   const caveResearch = action.type === 'cave_research' && action.researchId
     ? CAVE_RESEARCH_DEFINITIONS[action.researchId]
     : null;
+  const personInteraction = action.type === 'person_interaction' && action.interactionId
+    ? PERSON_INTERACTIONS[action.interactionId]
+    : null;
+  const interactionPerson = action.type === 'person_interaction' && action.relationshipId
+    ? RELATIONSHIPS[action.relationshipId]
+    : null;
   const total = action.endsAt - action.startedAt;
   const progress = Math.min(100, Math.max(0, ((now - action.startedAt) / total) * 100));
   const plannedCycles = action.plannedCycles ?? 1;
@@ -1174,8 +1199,8 @@ const CurrentActionCard = ({ action, now }: { action: GameState['character']['cu
       <div className="action-icon large">{definition.icon}</div>
       <div className="action-card-main">
         <div className="action-card-top"><span className="eyebrow">CURRENT ACTION · 当前行动</span><strong>{formatRemaining(action.endsAt, now)}</strong></div>
-        <h3>{explorationLocation ? `${definition.label} · ${explorationLocation.label}` : sectMission ? `${definition.label} · ${sectMission.title}` : caveResearch ? `${definition.label} · ${caveResearch.label}` : definition.label}{plannedCycles > 1 ? ` · 连续 ${plannedCycles} 轮` : ''}</h3>
-        <p>{plannedCycles > 1 ? `已经结算 ${completedCycles} / ${plannedCycles} 轮。触及突破关隘或伤势过重时会自动提前出关。` : explorationLocation ? explorationLocation.summary : sectMission ? sectMission.summary : caveResearch ? caveResearch.summary : definition.description}</p>
+        <h3>{explorationLocation ? `${definition.label} · ${explorationLocation.label}` : sectMission ? `${definition.label} · ${sectMission.title}` : caveResearch ? `${definition.label} · ${caveResearch.label}` : personInteraction && interactionPerson ? `${personInteraction.label} · ${interactionPerson.name}` : definition.label}{plannedCycles > 1 ? ` · 连续 ${plannedCycles} 轮` : ''}</h3>
+        <p>{plannedCycles > 1 ? `已经结算 ${completedCycles} / ${plannedCycles} 轮。触及突破关隘或伤势过重时会自动提前出关。` : explorationLocation ? explorationLocation.summary : sectMission ? sectMission.summary : caveResearch ? caveResearch.summary : personInteraction ? personInteraction.summary : definition.description}</p>
         <div className="progress-track action-progress"><div style={{ width: `${progress}%` }} /></div>
       </div>
     </div>
@@ -1673,11 +1698,13 @@ const formatSectEffects = (effects: ReturnType<typeof getSectEffects>) => {
   return labels.join(' · ');
 };
 
-const PeopleView = ({ social, now, currentAction, onResolveEvent, onJoinSect, onStartMission, onExchangeReputation, onPromotePosition, onDefectSect }: {
+const PeopleView = ({ social, spiritStones, now, currentAction, onResolveEvent, onStartInteraction, onJoinSect, onStartMission, onExchangeReputation, onPromotePosition, onDefectSect }: {
   social: GameState['social'];
+  spiritStones: number;
   now: number;
   currentAction: GameState['character']['currentAction'];
   onResolveEvent: (choiceId: string) => void;
+  onStartInteraction: (relationshipId: keyof GameState['social']['relationships'], interactionId: PersonInteractionId) => void;
   onJoinSect: (sectId: SectId) => void;
   onStartMission: (missionId: SectMissionId) => void;
   onExchangeReputation: (exchangeId: SectExchangeId) => void;
@@ -1730,6 +1757,29 @@ const PeopleView = ({ social, now, currentAction, onResolveEvent, onJoinSect, on
                 <p>{discovered ? person.introduction : '长生簿只记下了一个模糊的背影。也许下一次探索归来，名字就会落在纸上。'}</p>
                 <div className="relationship-meta">{discovered ? <><span>{relationship.status}</span><span>好感 {relationship.affinity}</span></> : <span>尚未相识</span>}</div>
                 {discovered && <small className="relationship-flavor">{person.flavor}</small>}
+                {discovered && (
+                  <div className="person-interaction-actions">
+                    {Object.values(PERSON_INTERACTIONS).map((interaction) => {
+                      const affinityLocked = Boolean(interaction.minimumAffinity && relationship.affinity < interaction.minimumAffinity);
+                      const stoneLocked = Boolean(interaction.costSpiritStones && spiritStones < interaction.costSpiritStones);
+                      const disabled = Boolean(currentAction) || relationship.status === '敌对' || affinityLocked || stoneLocked;
+                      const label = currentAction
+                        ? '行动中'
+                        : affinityLocked
+                          ? `需好感 ${interaction.minimumAffinity}`
+                          : stoneLocked
+                            ? `灵石不足`
+                            : interaction.costSpiritStones
+                              ? `${interaction.label} · -${interaction.costSpiritStones}石`
+                              : interaction.label;
+                      return (
+                        <button className="person-interaction-button" key={interaction.id} disabled={disabled} onClick={() => onStartInteraction(person.id, interaction.id)}>
+                          <span>{interaction.icon}</span>{label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </article>
             );
           })}

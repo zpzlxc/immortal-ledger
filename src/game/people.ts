@@ -1,5 +1,6 @@
 import type {
   PersonEventId,
+  PersonInteractionId,
   RelationshipId,
   SectId,
   SectPositionId,
@@ -46,6 +47,49 @@ export const RELATIONSHIPS: Record<RelationshipId, RelationshipDefinition> = {
     portrait: assetUrl('assets/characters/nameless-soul.png'),
     introduction: '它没有名字，也没有完整的记忆，只在你转身时比你早半拍说出心里的话。',
     flavor: '它对你越熟悉，井底那些被遗忘的旧事就越愿意浮上来。',
+  },
+};
+
+export type PersonInteractionDefinition = {
+  id: PersonInteractionId;
+  label: string;
+  icon: string;
+  durationMinutes: number;
+  summary: string;
+  costSpiritStones?: number;
+  minimumAffinity?: number;
+};
+
+export const PERSON_INTERACTIONS: Record<PersonInteractionId, PersonInteractionDefinition> = {
+  visit: {
+    id: 'visit',
+    label: '拜访',
+    icon: '访',
+    durationMinutes: 20,
+    summary: '带一点近况登门坐坐，不急着谈交易，也不把每次见面都变成一场任务。',
+  },
+  consult: {
+    id: 'consult',
+    label: '请教',
+    icon: '问',
+    durationMinutes: 30,
+    summary: '拿修行中遇到的一个问题请对方指点，关系越深，能交换的内容越具体。',
+  },
+  trade: {
+    id: 'trade',
+    label: '交易',
+    icon: '易',
+    durationMinutes: 25,
+    summary: '拿灵石换一份对方更容易取得的材料或线索。',
+    costSpiritStones: 6,
+  },
+  entrust: {
+    id: 'entrust',
+    label: '托付',
+    icon: '托',
+    durationMinutes: 45,
+    summary: '把一件不适合独自处理的事托给熟悉的人，关系达到熟悉后才会认真回应。',
+    minimumAffinity: 20,
   },
 };
 
@@ -612,6 +656,8 @@ export const getSectEffects = (
 };
 
 export const getPersonEvent = (eventId: PersonEventId) => PERSON_EVENTS[eventId];
+export const getPersonInteraction = (interactionId?: PersonInteractionId | null) =>
+  interactionId ? PERSON_INTERACTIONS[interactionId] : undefined;
 
 export type SectMissionDefinition = {
   id: SectMissionId;

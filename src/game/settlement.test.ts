@@ -23,6 +23,7 @@ import {
   resolvePersonEvent,
   startBreakthrough,
   startAction,
+  startPersonInteraction,
   startTechniqueSwap,
   treatInjury,
   tryBreakthrough,
@@ -117,6 +118,55 @@ describe('settlement rules', () => {
 
     expect(second.state.character.realm.cultivation).toBe(first.state.character.realm.cultivation);
     expect(second.newEntries).toHaveLength(0);
+  });
+
+  it('turns discovered relationships into timed actions with staged rewards', () => {
+    const state = createGame();
+    state.social.relationships['lin-qiu'] = {
+      affinity: 10,
+      interactionCount: 0,
+      status: '熟悉',
+      discovered: true,
+    };
+
+    const visit = startPersonInteraction(state, 'lin-qiu', 'visit', now);
+    expect(visit.error).toBeUndefined();
+    expect(visit.state.character.currentAction).toMatchObject({
+      type: 'person_interaction',
+      relationshipId: 'lin-qiu',
+      interactionId: 'visit',
+    });
+    const visited = settleGame(visit.state, now + 20 * MINUTE_MS, () => 0.99).state;
+    expect(visited.social.relationships['lin-qiu']).toMatchObject({ affinity: 14, interactionCount: 1, status: '熟悉' });
+    expect(visited.character.attributes.mentalState).toBe(82);
+
+    const traded = settleGame(
+      startPersonInteraction(visited, 'lin-qiu', 'trade', now + 20 * MINUTE_MS).state,
+      now + 45 * MINUTE_MS,
+      () => 0.99,
+    ).state;
+    expect(traded.inventory.spiritStones).toBe(24);
+    expect(traded.inventory.herbs).toBe(6);
+    expect(traded.social.relationships['lin-qiu'].affinity).toBe(16);
+    expect(startPersonInteraction(traded, 'lin-qiu', 'entrust', now + 45 * MINUTE_MS).error).toContain('好感达到 20');
+  });
+
+  it('lets relationship stages improve matching exploration routes', () => {
+    const state = createGame();
+    state.social.relationships['lin-qiu'] = {
+      affinity: 10,
+      interactionCount: 1,
+      status: '熟悉',
+      discovered: true,
+    };
+    const settled = settleGame(
+      startAction(state, 'explore', now, 'qingstone-mountain', undefined, () => 0.99),
+      now + 15 * MINUTE_MS,
+      () => 0.99,
+    );
+
+    expect(settled.state.inventory.spiritStones).toBe(39);
+    expect(settled.newEntries.some((entry) => entry.tags.includes('林秋关系加成 +1 灵石'))).toBe(true);
   });
 
   it('ages a character only while the current action is running', () => {

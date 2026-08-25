@@ -480,6 +480,10 @@ button:disabled { cursor: not-allowed; }
 .building-levels i.filled { background: var(--gold); }
 .building-effect { display: block; color: var(--green); font-size: 10px; line-height: 1.6; min-height: 33px; }
 .building-button { width: 100%; margin-top: 14px; overflow: hidden; text-overflow: ellipsis; }
+.person-interaction-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-top: 12px; padding-top: 11px; border-top: 1px dashed rgba(142,111,70,.2); }
+.person-interaction-button { min-width: 0; padding: 7px 6px; border: 1px solid rgba(142,111,70,.2); background: rgba(255,255,255,.35); color: var(--muted); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.person-interaction-button span { margin-right: 4px; color: var(--gold); }
+.person-interaction-button:not(:disabled):hover { color: var(--red); border-color: rgba(159,67,53,.35); background: rgba(159,67,53,.05); }
 .codex-grid { display: grid; gap: 11px; }
 .codex-overview { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 20px; background: #edf0e7; border-color: #d3dbc8; }
 .codex-overview h3 { color: #53634b; font-size: 17px; font-weight: 600; margin: 7px 0 5px; }

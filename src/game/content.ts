@@ -133,6 +133,13 @@ export const ACTIONS: Record<
     description: '消耗资源整理藏经阁中的残卷，沿着一条可持续推进的研究链寻找旧日线索。',
     risk: '风险：不消耗寿元，但研究期间不能安排其他行动',
   },
+  person_interaction: {
+    label: '人物交互',
+    icon: '缘',
+    durationMinutes: 20,
+    description: '花一段时间拜访已经认识的人，让关系不只依赖偶然发生的事件。',
+    risk: '风险：消耗时间；交易会消耗灵石',
+  },
 };
 
 export const REAL_MINUTE_TO_GAME_DAYS = 0.5;

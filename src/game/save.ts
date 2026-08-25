@@ -34,7 +34,7 @@ import type {
 } from './types';
 import { createStoryState, normalizeStoryState } from './story';
 
-export const CURRENT_SCHEMA_VERSION = 17;
+export const CURRENT_SCHEMA_VERSION = 18;
 
 const createId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 

@@ -32,6 +32,7 @@ import {
 import {
   createSocialState,
   getPersonEvent,
+  getPersonInteraction,
   getNextSectPosition,
   getSectPosition,
   getRelationshipStatus,
@@ -68,6 +69,8 @@ import type {
   LifeEndingId,
   LifeSummary,
   PersonEventId,
+  PersonInteractionId,
+  RelationshipId,
   SectId,
   SectExchangeId,
   SectMissionId,
@@ -468,6 +471,11 @@ const ACTION_PLAN_NOTES: Record<ActionType, readonly string[]> = {
     '这次闭关不追求立刻增长修为。你要做的是把前人留下的空白整理成可以继续追问的问题。',
     '灯火压低后，藏经阁只剩纸页翻动的声音。你决定耐心追查那些彼此呼应、却还没有答案的旧注。',
   ],
+  person_interaction: [
+    '你把要说的话在心里过了一遍，决定把这一段时间留给一个已经认识的人。',
+    '修行之外也有需要经营的缘分。你收好行囊，去赴一场不靠偶然触发的见面。',
+    '长生簿暂时合上功法页，替你在人物名册上留出一段可以慢慢写的空白。',
+  ],
 };
 
 const resolveCaveResearch = (
@@ -504,6 +512,106 @@ const resolveCaveResearch = (
     'action',
     `${research.label}完成`,
     research.result,
+    changes,
+    completedAt,
+  )];
+};
+
+const resolvePersonInteraction = (
+  state: GameState,
+  completedAt: number,
+) => {
+  const action = state.character.currentAction;
+  const relationshipId = action?.relationshipId;
+  const interaction = getPersonInteraction(action?.interactionId);
+  const person = relationshipId ? RELATIONSHIPS[relationshipId] : undefined;
+  if (!relationshipId || !interaction || !person) return [];
+
+  const relationship = state.social.relationships[relationshipId];
+  const affinityGain = {
+    visit: 4,
+    consult: 3,
+    trade: 2,
+    entrust: 8,
+  }[interaction.id];
+  relationship.affinity = Math.max(-100, Math.min(100, relationship.affinity + affinityGain));
+  relationship.interactionCount += 1;
+  relationship.status = getRelationshipStatus(relationship.affinity);
+  relationship.discovered = true;
+
+  const changes = [`${person.name}好感 +${affinityGain}`, `关系：${relationship.status}`];
+  if (interaction.id === 'visit') {
+    state.character.attributes.mentalState = Math.min(100, state.character.attributes.mentalState + 2);
+    changes.push('心境 +2');
+    if (relationship.status === '信任') {
+      state.character.attributes.fortune += 1;
+      changes.push('气运 +1');
+    }
+  }
+  if (interaction.id === 'consult') {
+    state.character.attributes.comprehension += 1;
+    changes.push('悟性 +1');
+    if (relationshipId === 'lin-qiu') {
+      const fragments = relationship.status === '信任' ? 2 : 1;
+      state.inventory.techniqueFragments += fragments;
+      changes.push(`功法残页 +${fragments}`);
+    }
+    if (relationshipId === 'xuan-song') {
+      const cultivation = relationship.status === '信任' ? 14 : 8;
+      state.character.realm.cultivation += cultivation;
+      changes.push(`修为 +${cultivation}`);
+    }
+    if (relationshipId === 'nameless-soul') {
+      const spiritSense = relationship.status === '信任' ? 2 : 1;
+      state.character.attributes.spiritSense += spiritSense;
+      changes.push(`神识 +${spiritSense}`);
+    }
+  }
+  if (interaction.id === 'trade') {
+    if (relationshipId === 'lin-qiu') {
+      const herbs = relationship.status === '信任' ? 5 : 3;
+      state.inventory.herbs += herbs;
+      changes.push(`灵草 +${herbs}`);
+    }
+    if (relationshipId === 'xuan-song') {
+      const fragments = relationship.status === '信任' ? 2 : 1;
+      state.inventory.techniqueFragments += fragments;
+      changes.push(`功法残页 +${fragments}`);
+    }
+    if (relationshipId === 'nameless-soul') {
+      const cultivation = relationship.status === '信任' ? 22 : 12;
+      state.character.realm.cultivation += cultivation;
+      changes.push(`修为 +${cultivation}`);
+    }
+  }
+  if (interaction.id === 'entrust') {
+    if (relationshipId === 'lin-qiu') {
+      state.inventory.spiritStones += 12;
+      changes.push('灵石 +12');
+    }
+    if (relationshipId === 'xuan-song') {
+      state.inventory.techniqueFragments += 2;
+      changes.push('功法残页 +2');
+    }
+    if (relationshipId === 'nameless-soul') {
+      state.character.realm.cultivation += 18;
+      state.character.attributes.fortune += 2;
+      changes.push('修为 +18', '气运 +2');
+    }
+    const flag = `person-interaction:${relationshipId}:entrust`;
+    if (!state.story.worldFlags.includes(flag)) state.story.worldFlags.push(flag);
+  }
+
+  const bodyByInteraction = {
+    visit: `你与${person.name}坐了一阵，没有急着把见面变成一场交易。关系不会凭空改变，但这段被认真留出的时间确实落在了长生簿上。`,
+    consult: `${person.name}没有替你回答修行的全部问题，只把其中最关键的一处指出来。你带着新的理解回到自己的路上。`,
+    trade: `你用灵石换来${person.name}手边更容易取得的东西。关系越深，对方愿意拿出来的就越不只是货物。`,
+    entrust: `你把一件不适合独自处理的事交给${person.name}。对方没有立刻许诺结果，却愿意替你把这段因果接过去一程。`,
+  } as const;
+  return [createLedgerEntry(
+    'relationship',
+    `${person.name} · ${interaction.label}`,
+    bodyByInteraction[interaction.id],
     changes,
     completedAt,
   )];
@@ -635,12 +743,30 @@ const actionResult = (
   if (actionType === 'cave_research') {
     return resolveCaveResearch(state, completedAt);
   }
+  if (actionType === 'person_interaction') {
+    return resolvePersonInteraction(state, completedAt);
+  }
 
   const { character, inventory } = state;
   const caveEffects = getCaveEffects(state.cave);
   const techniqueEffects = getTechniqueEffects(state.cultivationPath);
   const sectEffects = getSectEffects(state.social.sect.sectId, state.social.sect.positionId);
   const sectPosition = getSectPosition(state.social.sect.positionId);
+  const qingstoneRelationshipBonus = state.social.relationships['lin-qiu'].status === '信任'
+    ? 2
+    : state.social.relationships['lin-qiu'].status === '熟悉'
+      ? 1
+      : 0;
+  const blackwindRelationshipBonus = state.social.relationships['xuan-song'].status === '信任'
+    ? 2
+    : state.social.relationships['xuan-song'].status === '熟悉'
+      ? 1
+      : 0;
+  const wellRelationshipFragmentBonus = state.social.relationships['nameless-soul'].status === '信任'
+    ? 2
+    : state.social.relationships['nameless-soul'].status === '熟悉'
+      ? 1
+      : 0;
   const choose = <T,>(items: readonly T[]) => pick(items, random);
   const entries: LedgerEntry[] = [];
   let cultivationGain = 0;
@@ -760,18 +886,19 @@ const actionResult = (
 
     if (locationId === 'qingstone-mountain') {
       const herbGain = hasTalent(state, 'herbal-heart') ? randomInt(2, 4, random) : randomInt(1, 3, random);
-      const stoneGain = (hasTalent(state, 'sword-intent') ? randomInt(5, 10, random) : randomInt(3, 8, random)) + techniqueEffects.explorationStoneBonus + sectEffects.explorationStoneBonus;
+      const stoneGain = (hasTalent(state, 'sword-intent') ? randomInt(5, 10, random) : randomInt(3, 8, random)) + techniqueEffects.explorationStoneBonus + sectEffects.explorationStoneBonus + qingstoneRelationshipBonus;
       inventory.herbs += herbGain;
       inventory.spiritStones += stoneGain;
       cultivationGain = 5;
       title = choose(['青石山回响', '山雾里的旧脚印', '铃声引路', '猎户棚遗物', '山狐留下的路标']);
       body = choose(EXPLORE_RESULTS)(herbGain, stoneGain);
       changes.push(`灵草 +${herbGain}`, `灵石 +${stoneGain}`, '修为 +5');
+      if (qingstoneRelationshipBonus > 0) changes.push(`林秋关系加成 +${qingstoneRelationshipBonus} 灵石`);
     }
 
     if (locationId === 'blackwind-valley') {
       const herbGain = hasTalent(state, 'herbal-heart') ? randomInt(1, 3, random) : randomInt(0, 2, random);
-      const stoneGain = (hasTalent(state, 'sword-intent') ? randomInt(10, 18, random) : randomInt(6, 14, random)) + techniqueEffects.explorationStoneBonus + sectEffects.explorationStoneBonus;
+      const stoneGain = (hasTalent(state, 'sword-intent') ? randomInt(10, 18, random) : randomInt(6, 14, random)) + techniqueEffects.explorationStoneBonus + sectEffects.explorationStoneBonus + blackwindRelationshipBonus;
       const fragmentGain = random() < (hasTalent(state, 'perfect-memory') ? 0.65 : 0.4) ? 1 : 0;
       const injured = random() < 0.22;
       const mentalLoss = random() < 0.3 ? 4 : 0;
@@ -782,6 +909,7 @@ const actionResult = (
       title = choose(['黑风过碑', '谷底拾遗', '风里有字', '乱石滩归来']);
       body = choose(BLACKWIND_RESULTS)(herbGain, stoneGain, fragmentGain);
       changes.push(`灵草 +${herbGain}`, `灵石 +${stoneGain}`, '修为 +12');
+      if (blackwindRelationshipBonus > 0) changes.push(`玄松关系加成 +${blackwindRelationshipBonus} 灵石`);
       if (fragmentGain > 0) changes.push(`功法残页 +${fragmentGain}`);
       if (mentalLoss > 0) {
         character.attributes.mentalState = Math.max(0, character.attributes.mentalState - mentalLoss);
@@ -802,7 +930,7 @@ const actionResult = (
 
     if (locationId === 'nameless-well') {
       const stoneGain = randomInt(10, 20, random);
-      const fragmentGain = hasTalent(state, 'perfect-memory') ? randomInt(1, 3, random) : randomInt(1, 2, random);
+      const fragmentGain = (hasTalent(state, 'perfect-memory') ? randomInt(1, 3, random) : randomInt(1, 2, random)) + wellRelationshipFragmentBonus;
       const shaken = random() < 0.3;
       const karmaGain = random() < 0.5 ? 1 : -1;
       inventory.spiritStones += stoneGain;
@@ -812,6 +940,7 @@ const actionResult = (
       title = choose(['井底回声', '无名之字', '迟到的回答', '井中取火']);
       body = choose(WELL_RESULTS)(stoneGain, fragmentGain, shaken);
       changes.push(`灵石 +${stoneGain}`, `功法残页 +${fragmentGain}`, '修为 +10', `因果 ${karmaGain > 0 ? '+' : ''}${karmaGain}`);
+      if (wellRelationshipFragmentBonus > 0) changes.push(`无名残魂关系加成 +${wellRelationshipFragmentBonus} 页残卷`);
       if (shaken) {
         character.attributes.mentalState = Math.max(0, character.attributes.mentalState - 8);
         changes.push('心境 -8');
@@ -1293,6 +1422,8 @@ export const getActionStartError = (
   missionId?: SectMissionId,
   now = Date.now(),
   researchId?: CaveResearchId,
+  relationshipId?: RelationshipId,
+  interactionId?: PersonInteractionId,
 ) => {
   if (type === 'breakthrough') return getBreakthroughStartError(input, now);
   if (input.lifeStatus === 'dead') return '本世已经结束，不能再安排行动。';
@@ -1341,6 +1472,19 @@ export const getActionStartError = (
       return `研究「${research.label}」需要灵石 ${research.cost.spiritStones}、灵草 ${research.cost.herbs}、功法残页 ${research.cost.techniqueFragments}。`;
     }
   }
+  if (type === 'person_interaction') {
+    const interaction = getPersonInteraction(interactionId);
+    const relationship = relationshipId ? input.social.relationships[relationshipId] : null;
+    if (!interaction || !relationshipId || !relationship) return '这项人物交互尚未记录在长生簿中。';
+    if (!relationship.discovered) return '先通过探索或人物事件认识对方，才能主动拜访。';
+    if (relationship.status === '敌对') return '对方暂时不愿见你，先在事件中修复这段关系。';
+    if (interaction.minimumAffinity && relationship.affinity < interaction.minimumAffinity) {
+      return `关系好感达到 ${interaction.minimumAffinity} 后，才能进行「${interaction.label}」。`;
+    }
+    if (interaction.costSpiritStones && input.inventory.spiritStones < interaction.costSpiritStones) {
+      return `「${interaction.label}」需要 ${interaction.costSpiritStones} 枚灵石。`;
+    }
+  }
   if (type === 'technique_swap') {
     if (input.character.realm.major !== 'foundation_establishment') {
       return '筑基之后才能同时驾驭两门功法。';
@@ -1370,9 +1514,11 @@ export const startAction = (
   random: RandomSource = Math.random,
   plannedMinutes = 0,
   researchId?: CaveResearchId,
+  relationshipId?: RelationshipId,
+  interactionId?: PersonInteractionId,
 ): GameState => {
   const state = structuredClone(input);
-  if (getActionStartError(state, type, locationId, missionId, now, researchId)) return state;
+  if (getActionStartError(state, type, locationId, missionId, now, researchId, relationshipId, interactionId)) return state;
 
   const selectedLocationId = state.discoveredLocations.includes(locationId)
     ? locationId
@@ -1380,7 +1526,9 @@ export const startAction = (
   const selectedLocation = type === 'explore' ? getExplorationLocation(selectedLocationId) : null;
   const cycleDurationMinutes = type === 'cave_research'
     ? getCaveResearch(researchId)?.durationMinutes ?? ACTIONS[type].durationMinutes
-    : getActionDurationMinutes(type, state.cave, selectedLocationId, state.social?.sect?.sectId ?? null, missionId);
+    : type === 'person_interaction'
+      ? getPersonInteraction(interactionId)?.durationMinutes ?? ACTIONS[type].durationMinutes
+      : getActionDurationMinutes(type, state.cave, selectedLocationId, state.social?.sect?.sectId ?? null, missionId);
   const plannedCycles = isContinuousAction(type) && plannedMinutes > cycleDurationMinutes
     ? Math.max(1, Math.floor(plannedMinutes / cycleDurationMinutes))
     : 1;
@@ -1401,16 +1549,19 @@ export const startAction = (
     ...(type === 'explore' ? { locationId: selectedLocationId } : {}),
     ...(type === 'sect_mission' && missionId ? { missionId } : {}),
     ...(type === 'cave_research' && researchId ? { researchId } : {}),
+    ...(type === 'person_interaction' && relationshipId ? { relationshipId } : {}),
+    ...(type === 'person_interaction' && interactionId ? { interactionId } : {}),
   };
   state.lastSettledAt = now;
   state.ledger = [
     createLedgerEntry(
       'system',
       `已安排：${ACTIONS[type].label}`,
-      `${choose(ACTION_PLAN_NOTES[type])}${selectedLocation ? `${selectedLocation.label}：${selectedLocation.summary}` : getCaveResearch(researchId)?.summary ?? ACTIONS[type].description}${plannedCycles > 1 ? `已经安排连续 ${plannedCycles} 轮，预计修行 ${formatPlanDuration(durationMinutes)}；触及关隘或伤势过重时会提前出关。` : `预计在 ${durationMinutes} 分钟后完成。`}你可以关闭网页，回来时查看结果。`,
+      `${choose(ACTION_PLAN_NOTES[type])}${selectedLocation ? `${selectedLocation.label}：${selectedLocation.summary}` : getCaveResearch(researchId)?.summary ?? getPersonInteraction(interactionId)?.summary ?? ACTIONS[type].description}${plannedCycles > 1 ? `已经安排连续 ${plannedCycles} 轮，预计修行 ${formatPlanDuration(durationMinutes)}；触及关隘或伤势过重时会提前出关。` : `预计在 ${durationMinutes} 分钟后完成。`}你可以关闭网页，回来时查看结果。`,
       [
         ACTIONS[type].label,
         getCaveResearch(researchId)?.label ?? '',
+        getPersonInteraction(interactionId)?.label ?? '',
         selectedLocation?.risk ?? ACTIONS[type].risk,
         plannedCycles > 1 ? `连续 ${plannedCycles} 轮` : '',
       ].filter(Boolean),
@@ -1445,6 +1596,49 @@ export const startCaveResearch = (
       `功法残页 -${research.cost.techniqueFragments}`,
       `耗时 ${research.durationMinutes} 分钟`,
     );
+  }
+  return { state: started, newEntries: entry ? [entry] : [] };
+};
+
+export const startPersonInteraction = (
+  input: GameState,
+  relationshipId: RelationshipId,
+  interactionId: PersonInteractionId,
+  now = Date.now(),
+  random: RandomSource = Math.random,
+): SocialMutationResult => {
+  const state = structuredClone(input);
+  const error = getActionStartError(
+    state,
+    'person_interaction',
+    'qingstone-mountain',
+    undefined,
+    now,
+    undefined,
+    relationshipId,
+    interactionId,
+  );
+  if (error) return { state, newEntries: [], error };
+  const interaction = getPersonInteraction(interactionId);
+  if (!interaction) return { state, newEntries: [], error: '这项人物交互尚未记录在长生簿中。' };
+  const started = startAction(
+    state,
+    'person_interaction',
+    now,
+    'qingstone-mountain',
+    undefined,
+    random,
+    0,
+    undefined,
+    relationshipId,
+    interactionId,
+  );
+  if (interaction.costSpiritStones) {
+    started.inventory.spiritStones -= interaction.costSpiritStones;
+  }
+  const entry = started.ledger[0];
+  if (entry && interaction.costSpiritStones) {
+    entry.tags.push(`灵石 -${interaction.costSpiritStones}`);
   }
   return { state: started, newEntries: entry ? [entry] : [] };
 };
