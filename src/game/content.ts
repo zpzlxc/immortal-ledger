@@ -156,6 +156,7 @@ export const CONTINUOUS_ACTION_TYPES: ActionType[] = [
   'temper',
   'insight',
   'overdrive',
+  'explore',
   'study',
 ];
 

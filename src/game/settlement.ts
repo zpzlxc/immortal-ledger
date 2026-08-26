@@ -1283,9 +1283,28 @@ export const settleGame = (
             ),
           );
           stopReason = 'event';
-        } else if (state.character.realm.cultivation >= state.character.realm.cultivationRequired) {
+        } else {
+          const explorationEvent = getNextExplorationEvent(state, batchAction, random);
+          if (explorationEvent) {
+            state.pendingExplorationEvent = {
+              eventId: explorationEvent.id,
+              createdAt: completedAt,
+            };
+            newEntries.push(
+              createLedgerEntry(
+                'exploration',
+                `探索抉择：${explorationEvent.title}`,
+                explorationEvent.summary,
+                ['待处理', explorationEvent.eyebrow],
+                completedAt,
+              ),
+            );
+            stopReason = 'event';
+          }
+        }
+        if (!stopReason && state.character.realm.cultivation >= state.character.realm.cultivationRequired) {
           stopReason = 'breakthrough';
-        } else if (batchAction.type === 'overdrive' && (state.character.injury?.severity ?? 0) >= 3) {
+        } else if (!stopReason && batchAction.type === 'overdrive' && (state.character.injury?.severity ?? 0) >= 3) {
           stopReason = 'injury';
         }
       }

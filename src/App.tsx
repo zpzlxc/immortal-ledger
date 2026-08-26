@@ -781,7 +781,9 @@ const App = () => {
               discoveredLocations={game.discoveredLocations}
               pendingEvent={game.pendingExplorationEvent ? getExplorationEvent(game.pendingExplorationEvent.eventId) : null}
               selectedLocationId={selectedExplorationLocationId}
+              practicePlanMinutes={practicePlanMinutes}
               onLocationChange={setSelectedExplorationLocationId}
+              onPracticePlanChange={handlePracticePlanChange}
               onStart={handleStartAction}
               onResolveEvent={handleResolveExplorationEvent}
             />
@@ -1257,16 +1259,19 @@ const ActionOption = ({ type, currentAction, injury, cave, sectId, selectedLocat
   );
 };
 
-const PracticePlanSelector = ({ value, disabled, onChange }: {
+const PracticePlanSelector = ({ value, disabled, onChange, eyebrow = 'PRACTICE PLAN · 修炼计划', title = '这次准备修多久', description = '长计划仍按单轮规则逐次结算，不会改变修炼收益；触及关隘或伤势过重时自动出关。' }: {
   value: number;
   disabled: boolean;
   onChange: (minutes: number) => void;
+  eyebrow?: string;
+  title?: string;
+  description?: string;
 }) => (
-  <section className="practice-plan paper-card" aria-label="连续修炼时长">
+  <section className="practice-plan paper-card" aria-label={title}>
     <div>
-      <span className="eyebrow">PRACTICE PLAN · 修炼计划</span>
-      <h3>这次准备修多久</h3>
-      <p>长计划仍按单轮规则逐次结算，不会改变修炼收益；触及关隘或伤势过重时自动出关。</p>
+      <span className="eyebrow">{eyebrow}</span>
+      <h3>{title}</h3>
+      <p>{description}</p>
     </div>
     <div className="practice-plan-options">
       {PRACTICE_PLAN_OPTIONS.map((option) => (
@@ -1459,7 +1464,7 @@ const TechniqueView = ({ currentAction, now, cave, sectId, inventory, realm, cul
   </div>
 );
 
-const ExplorationView = ({ currentAction, now, cave, sectId, worldCycle, discoveredLocations, pendingEvent, selectedLocationId, onLocationChange, onStart, onResolveEvent }: {
+const ExplorationView = ({ currentAction, now, cave, sectId, worldCycle, discoveredLocations, pendingEvent, selectedLocationId, practicePlanMinutes, onLocationChange, onPracticePlanChange, onStart, onResolveEvent }: {
   currentAction: GameState['character']['currentAction'];
   now: number;
   cave: GameState['cave'];
@@ -1468,8 +1473,10 @@ const ExplorationView = ({ currentAction, now, cave, sectId, worldCycle, discove
   discoveredLocations: string[];
   pendingEvent: ReturnType<typeof getExplorationEvent> | null;
   selectedLocationId: ExplorationLocationId;
+  practicePlanMinutes: number;
   onLocationChange: (locationId: ExplorationLocationId) => void;
-  onStart: (type: ActionType, locationId?: ExplorationLocationId) => void;
+  onPracticePlanChange: (minutes: number) => void;
+  onStart: (type: ActionType, locationId?: ExplorationLocationId, plannedMinutes?: number) => void;
   onResolveEvent: (choiceId: string) => void;
 }) => (
   <div className="view-stack">
@@ -1508,12 +1515,20 @@ const ExplorationView = ({ currentAction, now, cave, sectId, worldCycle, discove
         disabled={Boolean(currentAction)}
         onChange={onLocationChange}
       />
+      <PracticePlanSelector
+        value={practicePlanMinutes}
+        disabled={Boolean(currentAction)}
+        onChange={onPracticePlanChange}
+        eyebrow="EXPLORATION PLAN · 探索计划"
+        title="这次准备探索多久"
+        description="长计划仍按单次探索规则逐轮结算；遇到人物或探索事件、触及关隘或伤势过重时会自动停下。"
+      />
       <section className="exploration-action-card paper-card">
         <div className="section-intro">
           <div><span className="eyebrow">SET OUT · 动身</span><h3>准备好就出发</h3></div>
           <span>地点会影响耗时、风险和收获</span>
         </div>
-        <ActionOption type="explore" currentAction={currentAction} cave={cave} sectId={sectId} selectedLocationId={selectedLocationId} onStart={onStart} />
+        <ActionOption type="explore" currentAction={currentAction} cave={cave} sectId={sectId} selectedLocationId={selectedLocationId} plannedMinutes={practicePlanMinutes} onStart={onStart} />
       </section>
     </section>
     {currentAction && <div className="hint-note">当前行动还剩 {formatRemaining(currentAction.endsAt, now)}。你可以关闭网页，回来时查看长生簿。</div>}

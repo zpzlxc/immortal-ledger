@@ -106,6 +106,34 @@ describe('settlement rules', () => {
     expect(settled.newEntries.some((entry) => entry.title === '人物事件：松下三问')).toBe(true);
   });
 
+  it('supports continuous exploration and pauses when an exploration event needs a response', () => {
+    const state = createGame();
+    state.social.completedPersonEventIds.push('lin-qiu-caravan');
+    const active = startAction(
+      state,
+      'explore',
+      now,
+      'qingstone-mountain',
+      undefined,
+      () => 0,
+      60,
+    );
+
+    expect(active.character.currentAction).toMatchObject({
+      cycleDurationMinutes: 15,
+      plannedCycles: 4,
+      completedCycles: 0,
+    });
+
+    const settled = settleGame(active, now + 60 * MINUTE_MS, () => 0);
+
+    expect(settled.state.character.currentAction).toBeNull();
+    expect(settled.state.pendingExplorationEvent).not.toBeNull();
+    expect(settled.newEntries.some((entry) => entry.title.includes('提前出关'))).toBe(true);
+    expect(settled.newEntries.some((entry) => entry.title.startsWith('探索抉择：'))).toBe(true);
+    expect(settled.newEntries.some((entry) => entry.tags.includes('完成 1 轮'))).toBe(true);
+  });
+
   it('settles a completed action once', () => {
     const active = startAction(createGame(), 'meditate', now, 'qingstone-mountain', undefined, () => 0);
     const first = settleGame(active, now + 5 * MINUTE_MS, () => 0.99);
