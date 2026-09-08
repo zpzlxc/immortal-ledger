@@ -1,0 +1,22 @@
+name = "immortal-ledger"
+main = "src/index.ts"
+compatibility_date = "2026-08-28"
+workers_dev = true
+
+# Run `npm run build` before deploying so the Worker also hosts the Vite SPA.
+[assets]
+directory = "../dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "zpzlxc"
+database_id = "19cece15-352b-47b5-85c5-ab539908b390"
+migrations_dir = "migrations"
+
+[vars]
+# Current browser origins for GitHub Pages and local Vite development. Update
+# this if a custom domain or a different local port is configured later.
+ALLOWED_ORIGIN = "https://zpzlxc.github.io,http://localhost:5173,http://127.0.0.1:5173"

@@ -1,3 +1,4 @@
+import { getJourneyGuidance, type GuideTab } from './game/guidance';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import {
   ACTIONS,
@@ -84,9 +85,24 @@ import {
   downloadSave,
   loadGame,
   parseSaveFile,
-  saveGame,
+  parseSaveText,
+  saveGame as saveLocalGame,
+  subscribeToSaveChanges,
   startNextLife,
 } from './game/save';
+import {
+  clearCloudSession,
+  CloudSaveError,
+  fetchCloudSave,
+  getCloudSession,
+  isCloudSaveConfigured,
+  loginCloudAccount,
+  logoutCloudAccount,
+  registerCloudAccount,
+  uploadCloudSave,
+  type CloudSaveRecord,
+  type CloudSession,
+} from './cloudSave';
 import {
   collectCave,
   performCaveMastery,
@@ -135,24 +151,14 @@ const getInitialSession = (): InitialSession => {
   if (!saved) return { game: null, offlineSummary: null };
   const now = Date.now();
   const settled = settleGame(saved, now);
-  saveGame(settled.state);
+  saveLocalGame(settled.state);
   return {
     game: settled.state,
     offlineSummary: getOfflineSummary(saved, settled.state, now),
   };
 };
 
-const getNextStepSuggestion = (state: GameState) => {
-  if (state.lifeStatus === 'dead') return '这一世已经写到终章。';
-  if (state.social.pendingPersonEvent) return '人物事件正在等你回应，先去人物页落下这一笔。';
-  if (state.pendingExplorationEvent) return '探索带回了一道岔路，先去探索页选择你要留下的方向。';
-  if (state.character.currentAction) return `「${ACTIONS[state.character.currentAction.type].label}」仍在进行，等它完成后再安排下一步。`;
-  if (state.character.realm.major === 'foundation_establishment' && state.character.realm.stage >= 4) return '筑基已经圆满。备齐终局资源后，可以在修炼页叩问金丹，为这一世写下结局。';
-  if (state.character.realm.major === 'foundation_establishment') return '筑基之后，修炼页已经出现新的筑基试炼，可以去云外峰场寻找更高阶的机缘。';
-  if (state.cave.stored.cultivation > 0 || state.cave.stored.herbs > 0) return '洞府里还有待收产出，可以先去洞府收好这一笔家底。';
-  if (state.character.realm.cultivation >= state.character.realm.cultivationRequired) return '修为已经触及瓶颈，可以先夯实根基，再决定是否尝试突破。';
-  return '长生簿已经替你记下这一段时间，现在可以安排下一项行动。';
-};
+const getNextStepSuggestion = (state: GameState) => state.lifeStatus === 'dead' ? '这一世已经写到终章。' : getJourneyGuidance(state).detail;
 
 const formatOfflineDuration = (minutes: number) => {
   if (minutes < 60) return `${minutes} 分钟`;
@@ -164,6 +170,7 @@ const formatOfflineDuration = (minutes: number) => {
 const formatSignedValue = (value: number) => `${value > 0 ? '+' : ''}${value}`;
 
 const PRACTICE_PLAN_KEY = 'immortal-ledger-practice-plan-minutes';
+type CloudAuthMode = 'login' | 'register';
 
 const loadPracticePlanMinutes = () => {
   const stored = window.localStorage.getItem(PRACTICE_PLAN_KEY);
@@ -183,11 +190,189 @@ const App = () => {
   const [errorMessage, setErrorMessage] = useState('');
   const [practicePlanMinutes, setPracticePlanMinutes] = useState(loadPracticePlanMinutes);
   const importInput = useRef<HTMLInputElement>(null);
+  const [cloudSession, setCloudSession] = useState<CloudSession | null>(() => getCloudSession());
+  const [cloudStatus, setCloudStatus] = useState(() => {
+    if (!isCloudSaveConfigured()) return '本地模式';
+    return getCloudSession() ? '同步准备中' : '未登录';
+  });
+  const [cloudAuthMode, setCloudAuthMode] = useState<CloudAuthMode | null>(null);
+  const [cloudAuthUsername, setCloudAuthUsername] = useState('');
+  const [cloudAuthPassword, setCloudAuthPassword] = useState('');
+  const [cloudAuthError, setCloudAuthError] = useState('');
+  const [cloudAuthSubmitting, setCloudAuthSubmitting] = useState(false);
+  const latestGameRef = useRef<GameState | null>(initialSession.game);
+  const cloudRevisionRef = useRef<number | null>(null);
+  const cloudSyncQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   const captureOfflineSummary = (before: GameState, after: GameState, settledAt: number) => {
     const summary = getOfflineSummary(before, after, settledAt);
     if (summary) setOfflineSummary(summary);
   };
+
+  const applyCloudSave = (remote: CloudSaveRecord) => {
+    const incoming = parseSaveText(JSON.stringify(remote.state));
+    cloudRevisionRef.current = remote.revision;
+    latestGameRef.current = incoming;
+    saveLocalGame(incoming);
+    setGame(incoming);
+    setOfflineSummary(null);
+    setNotice([]);
+  };
+
+  const synchronizeCloudSession = async () => {
+    if (!isCloudSaveConfigured() || !getCloudSession()) return;
+    setCloudStatus('同步中');
+    const remote = await fetchCloudSave();
+    if (remote) {
+      applyCloudSave(remote);
+      setCloudStatus('云端已同步');
+      return;
+    }
+
+    cloudRevisionRef.current = 0;
+    const local = latestGameRef.current;
+    if (local) {
+      const uploaded = await uploadCloudSave(local, 0);
+      cloudRevisionRef.current = uploaded.revision;
+    }
+    setCloudStatus('云端已同步');
+  };
+
+  const saveGame = (state: GameState) => {
+    latestGameRef.current = state;
+    saveLocalGame(state);
+    if (!isCloudSaveConfigured() || !getCloudSession() || cloudRevisionRef.current === null) return;
+
+    cloudSyncQueueRef.current = cloudSyncQueueRef.current.then(async () => {
+      const expectedRevision = cloudRevisionRef.current;
+      if (expectedRevision === null || !getCloudSession()) return;
+      try {
+        setCloudStatus('同步中');
+        const uploaded = await uploadCloudSave(state, expectedRevision);
+        cloudRevisionRef.current = uploaded.revision;
+        setCloudStatus('云端已同步');
+      } catch (error) {
+        if (error instanceof CloudSaveError && error.status === 409 && error.remoteSave) {
+          applyCloudSave(error.remoteSave);
+          setCloudStatus('云端已同步');
+          setErrorMessage('检测到其他设备已有更新，已采用云端最新存档；本地旧版本仍保留在备份和导出文件中。');
+          return;
+        }
+        if (error instanceof CloudSaveError && error.status === 401) {
+          clearCloudSession();
+          setCloudSession(null);
+          setCloudStatus('未登录');
+        } else {
+          setCloudStatus('同步失败');
+          setErrorMessage(error instanceof Error ? error.message : '云存档同步失败');
+        }
+      }
+    });
+  };
+
+  const handleCloudAuth = (mode: CloudAuthMode) => {
+    if (!isCloudSaveConfigured()) return;
+    setCloudAuthMode(mode);
+    setCloudAuthUsername(cloudSession?.user.username ?? '');
+    setCloudAuthPassword('');
+    setCloudAuthError('');
+  };
+
+  const closeCloudAuth = () => {
+    if (cloudAuthSubmitting) return;
+    setCloudAuthMode(null);
+    setCloudAuthPassword('');
+    setCloudAuthError('');
+  };
+
+  const submitCloudAuth = async () => {
+    if (!cloudAuthMode || cloudAuthSubmitting) return;
+    const username = cloudAuthUsername.trim();
+    if (username.length < 3 || username.length > 64 || /[\s/]/u.test(username)) {
+      setCloudAuthError('用户名需要是 3–64 位，不能包含空格或斜杠');
+      return;
+    }
+    if (cloudAuthPassword.length < 8 || cloudAuthPassword.length > 128) {
+      setCloudAuthError('密码需要是 8–128 位');
+      return;
+    }
+    setCloudAuthSubmitting(true);
+    setCloudAuthError('');
+    try {
+      setCloudStatus(cloudAuthMode === 'login' ? '登录中' : '注册中');
+      const session = cloudAuthMode === 'login'
+        ? await loginCloudAccount(username, cloudAuthPassword)
+        : await registerCloudAccount(username, cloudAuthPassword);
+      setCloudSession(session);
+      cloudRevisionRef.current = null;
+      setCloudAuthMode(null);
+      setCloudAuthPassword('');
+      setErrorMessage('');
+      try {
+        await synchronizeCloudSession();
+      } catch (error) {
+        setCloudStatus('同步失败');
+        setErrorMessage(`已登录，存档同步未完成：${error instanceof Error ? error.message : '请稍后重试'}`);
+      }
+    } catch (error) {
+      setCloudStatus(getCloudSession() ? '同步失败' : '未登录');
+      setCloudAuthError(error instanceof Error ? error.message : '云存档登录失败');
+    } finally {
+      setCloudAuthSubmitting(false);
+    }
+  };
+
+  const retryCloudSync = async () => {
+    if (cloudStatus === '同步中') return;
+    try {
+      await synchronizeCloudSession();
+      setErrorMessage('');
+    } catch (error) {
+      if (error instanceof CloudSaveError && error.status === 401) {
+        clearCloudSession();
+        cloudRevisionRef.current = null;
+        setCloudSession(null);
+        setCloudStatus('未登录');
+      } else {
+        setCloudStatus('同步失败');
+      }
+      setErrorMessage(error instanceof Error ? error.message : '同步失败，请稍后重试');
+    }
+  };
+
+  const handleCloudLogout = async () => {
+    try {
+      await logoutCloudAccount();
+    } catch {
+      // 本地会话仍然会在 logoutCloudAccount 的 finally 中清除。
+    }
+    cloudRevisionRef.current = null;
+    setCloudSession(null);
+    setCloudStatus(isCloudSaveConfigured() ? '未登录' : '本地模式');
+  };
+
+  useEffect(() => {
+    latestGameRef.current = game;
+  }, [game]);
+
+  useEffect(() => {
+    if (!isCloudSaveConfigured() || !getCloudSession()) return undefined;
+    let active = true;
+    void synchronizeCloudSession().catch((error) => {
+      if (!active) return;
+      if (error instanceof CloudSaveError && error.status === 401) {
+        clearCloudSession();
+        setCloudSession(null);
+        setCloudStatus('未登录');
+      } else {
+        setCloudStatus('同步失败');
+        setErrorMessage(error instanceof Error ? error.message : '云存档同步失败');
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -206,6 +391,26 @@ const App = () => {
     }, 1_000);
 
     return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const applyIncomingSave = (incoming: GameState | null) => {
+      setOfflineSummary(null);
+      setNotice([]);
+      setErrorMessage('');
+      latestGameRef.current = incoming;
+      setGame(incoming);
+    };
+    const unsubscribe = subscribeToSaveChanges(applyIncomingSave);
+    const syncAfterFocus = () => {
+      const incoming = loadGame();
+      if (incoming) applyIncomingSave(incoming);
+    };
+    window.addEventListener('focus', syncAfterFocus);
+    return () => {
+      unsubscribe();
+      window.removeEventListener('focus', syncAfterFocus);
+    };
   }, []);
 
   useEffect(() => {
@@ -541,6 +746,7 @@ const App = () => {
     if (!file) return;
     try {
       const imported = await parseSaveFile(file);
+      if (!window.confirm(`导入「${imported.character.name}」的存档并替换当前进度？${getCloudSession() ? '登录状态下也会同步到云端。' : ''}建议先导出备份。`)) return;
       saveGame(imported);
       setGame(imported);
       setOfflineSummary(null);
@@ -552,7 +758,31 @@ const App = () => {
   };
 
   if (!game) {
-    return <CreateCharacter onCreate={handleCreate} />;
+    return (
+      <>
+        <CreateCharacter
+          onCreate={handleCreate}
+          cloudEnabled={isCloudSaveConfigured()}
+          cloudSession={cloudSession}
+          cloudStatus={cloudStatus}
+          onCloudAuth={handleCloudAuth}
+          onCloudLogout={handleCloudLogout}
+          cloudError={errorMessage}
+          onCloudRetry={() => void retryCloudSync()}
+        />
+        <CloudAuthModal
+          mode={cloudAuthMode}
+          username={cloudAuthUsername}
+          password={cloudAuthPassword}
+          error={cloudAuthError}
+          submitting={cloudAuthSubmitting}
+          onUsernameChange={setCloudAuthUsername}
+          onPasswordChange={setCloudAuthPassword}
+          onSubmit={() => void submitCloudAuth()}
+          onClose={closeCloudAuth}
+        />
+      </>
+    );
   }
 
   if (game.lifeStatus === 'dead' && game.lifeSummary) {
@@ -620,10 +850,30 @@ const App = () => {
             <div className="brand-subtitle">一页凡尘，百年问道</div>
           </div>
         </div>
-        <div className="top-actions">
+        <div className="top-actions" aria-label="存档与账号">
           <span className="save-status"><span className="status-dot" />本地存档</span>
-          <button className="ghost-button" onClick={() => downloadSave(game)}>导出</button>
-          <button className="ghost-button" onClick={() => importInput.current?.click()}>导入</button>
+          {isCloudSaveConfigured() && (
+            <>
+              <span className="cloud-save-status" title={cloudStatus}>☁ {cloudSession ? `${cloudSession.user.username} · ${cloudStatus}` : `云存档：${cloudStatus}`}</span>
+              {cloudSession ? (
+                <button className="ghost-button" onClick={() => void handleCloudLogout()}>退出云存档</button>
+              ) : (
+                <>
+                  <button className="ghost-button" onClick={() => void handleCloudAuth('login')}>登录云存档</button>
+                  <button className="ghost-button" onClick={() => void handleCloudAuth('register')}>注册云存档</button>
+                </>
+              )}
+            </>
+          )}
+          <details className="save-menu">
+            <summary>存档管理 <span aria-hidden="true">⌄</span></summary>
+            <div className="save-menu-panel">
+              <strong>留一份修行墨迹</strong>
+              <p>导出文件可独立保存；导入会替换当前进度。</p>
+              <button className="ghost-button" onClick={() => downloadSave(game)}>导出当前存档</button>
+              <button className="ghost-button" onClick={() => importInput.current?.click()}>导入存档文件</button>
+            </div>
+          </details>
           <input
             ref={importInput}
             className="visually-hidden"
@@ -638,7 +888,7 @@ const App = () => {
       </header>
 
       <main className="main-layout">
-        <nav className="tab-bar">
+        <nav className="tab-bar" aria-label="修行分区">
           <TabButton icon="簿" active={activeTab === 'ledger'} onClick={() => setActiveTab('ledger')} label="长生簿" badge={unreadCount} />
           <TabButton icon="炼" active={activeTab === 'cultivation'} onClick={() => setActiveTab('cultivation')} label="修炼" />
           <TabButton icon="诀" active={activeTab === 'technique'} onClick={() => setActiveTab('technique')} label="功法" />
@@ -690,7 +940,7 @@ const App = () => {
           </section>
 
           <section className="side-section inventory-section">
-            <div className="section-heading"><span>随身物</span><span className="muted">本地</span></div>
+            <div className="section-heading"><span>随身物</span><span className="muted">资源</span></div>
             <div className="inventory-row"><span>灵石</span><strong>{game.inventory.spiritStones}</strong></div>
             <div className="inventory-row"><span>灵草</span><strong>{game.inventory.herbs}</strong></div>
             <div className="inventory-row"><span>功法残页</span><strong>{game.inventory.techniqueFragments}</strong></div>
@@ -701,10 +951,12 @@ const App = () => {
         </aside>
 
         <section className="content-column">
+          {errorMessage && <div className="feedback-banner" role="alert"><span>{errorMessage}</span>{cloudSession && cloudStatus === '同步失败' && <button className="text-button" onClick={() => void retryCloudSync()}>重试同步</button>}<button className="text-button" aria-label="关闭提示" onClick={() => setErrorMessage('')}>×</button></div>}
+          {cloudSession && cloudStatus === '同步失败' && !errorMessage && <div className="feedback-banner" role="status"><span>云存档同步失败</span><button className="text-button" onClick={() => void retryCloudSync()}>重试同步</button></div>}
           <section className="mobile-status paper-card" aria-label="角色状态摘要">
             <div><span>{game.character.name}</span><strong>{formatRealm(game.character.realm.major, game.character.realm.stage)}</strong></div>
             <div className="mobile-status-progress"><span>修为 {game.character.realm.cultivation}/{game.character.realm.cultivationRequired}</span><i><b style={{ width: `${cultivationRatio}%` }} /></i></div>
-            <div className="mobile-status-resources"><span>石 {game.inventory.spiritStones}</span><span>草 {game.inventory.herbs}</span><span>丹 {game.inventory.healingPills}</span></div>
+            <div className="mobile-status-resources"><span>灵石 {game.inventory.spiritStones}</span><span>灵草 {game.inventory.herbs}</span><span>丹药 {game.inventory.healingPills}</span></div>
           </section>
           {notice.length > 0 && (
             <div className="settlement-banner">
@@ -730,6 +982,7 @@ const App = () => {
               onDismissOfflineSummary={() => setOfflineSummary(null)}
               pendingEvent={pendingLedgerEvent}
               onOpenPendingEvent={handleOpenPendingEvent}
+              onNavigate={(tab) => { setActiveTab(tab); setErrorMessage(''); document.querySelector('.content-column')?.scrollTo({ top: 0 }); window.scrollTo({ top: 0 }); }}
             />
           )}
       {activeTab === 'cultivation' && (
@@ -822,14 +1075,140 @@ const App = () => {
           )}
           {activeTab === 'codex' && <CodexView game={game} />}
 
-          {errorMessage && <div className="error-note">{errorMessage}</div>}
+
         </section>
       </main>
+      <CloudAuthModal
+        mode={cloudAuthMode}
+        username={cloudAuthUsername}
+        password={cloudAuthPassword}
+        error={cloudAuthError}
+        submitting={cloudAuthSubmitting}
+        onUsernameChange={setCloudAuthUsername}
+        onPasswordChange={setCloudAuthPassword}
+        onSubmit={() => void submitCloudAuth()}
+        onClose={closeCloudAuth}
+      />
     </div>
   );
 };
 
-const CreateCharacter = ({ onCreate }: { onCreate: (name: string, talent: Talent) => void }) => {
+const CloudAuthModal = ({
+  mode,
+  username,
+  password,
+  error,
+  submitting,
+  onUsernameChange,
+  onPasswordChange,
+  onSubmit,
+  onClose,
+}: {
+  mode: CloudAuthMode | null;
+  username: string;
+  password: string;
+  error: string;
+  submitting: boolean;
+  onUsernameChange: (value: string) => void;
+  onPasswordChange: (value: string) => void;
+  onSubmit: () => void;
+  onClose: () => void;
+}) => {
+  const dialogRef = useRef<HTMLElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useEffect(() => {
+    if (!mode) return;
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); closeRef.current(); }
+      if (event.key !== 'Tab') return;
+      const nodes = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('input:not(:disabled), button:not(:disabled)') ?? []);
+      if (!nodes.length) { event.preventDefault(); return; }
+      const first = nodes[0];
+      const last = nodes[nodes.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => { document.removeEventListener('keydown', onKeyDown); previousFocus?.focus(); };
+  }, [mode]);
+  if (!mode) return null;
+  const isLogin = mode === 'login';
+  return (
+    <div className="cloud-auth-modal-backdrop" onMouseDown={onClose}>
+      <section
+        ref={dialogRef}
+        className="cloud-auth-modal paper-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="cloud-auth-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="eyebrow">CLOUD SAVE · 云存档</div>
+        <h2 id="cloud-auth-title">{isLogin ? '登录云存档' : '注册云存档'}</h2>
+        <p>本地和线上页面会共用同一份修炼进度。</p>
+        <form onSubmit={(event) => { event.preventDefault(); onSubmit(); }}>
+          <label className="field-label" htmlFor="cloud-username">用户名</label>
+          <input
+            id="cloud-username"
+            className="name-input cloud-auth-input"
+            value={username}
+            maxLength={64}
+            minLength={3}
+            required
+            disabled={submitting}
+            placeholder="3–64 位，不含空格或斜杠"
+            autoComplete="username"
+            onChange={(event) => onUsernameChange(event.target.value)}
+            autoFocus
+          />
+          <label className="field-label" htmlFor="cloud-password">密码</label>
+          <input
+            id="cloud-password"
+            className="name-input cloud-auth-input"
+            type="password"
+            value={password}
+            maxLength={128}
+            minLength={8}
+            required
+            disabled={submitting}
+            placeholder="8–128 位密码"
+            autoComplete={isLogin ? 'current-password' : 'new-password'}
+            onChange={(event) => onPasswordChange(event.target.value)}
+          />
+          {error && <div className="error-note cloud-auth-error" role="alert">{error}</div>}
+          <div className="cloud-auth-modal-actions">
+            <button type="button" className="secondary-button" onClick={onClose} disabled={submitting}>取消</button>
+            <button type="submit" className="primary-button" disabled={submitting}>
+              {submitting ? '处理中…' : isLogin ? '登录并同步' : '注册并同步'}
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+  );
+};
+
+const CreateCharacter = ({
+  onCreate,
+  cloudEnabled,
+  cloudSession,
+  cloudStatus,
+  onCloudAuth,
+  onCloudLogout,
+  cloudError,
+  onCloudRetry,
+}: {
+  onCreate: (name: string, talent: Talent) => void;
+  cloudEnabled: boolean;
+  cloudSession: CloudSession | null;
+  cloudStatus: string;
+  onCloudAuth: (mode: 'login' | 'register') => void;
+  onCloudLogout: () => Promise<void>;
+  cloudError: string;
+  onCloudRetry: () => void;
+}) => {
   const [name, setName] = useState('沈砚');
   const [talentOptions] = useState(() => shuffle(TALENTS).slice(0, getLegacyTalentOptionCount()));
   const [selectedTalentId, setSelectedTalentId] = useState(talentOptions[0].id);
@@ -873,6 +1252,23 @@ const CreateCharacter = ({ onCreate }: { onCreate: (name: string, talent: Talent
           落笔，开始这一世 <span>→</span>
         </button>
         <div className="onboarding-footnote">本版本使用浏览器本地存档 · 默认静音 · 随时可以导出备份</div>
+        {cloudEnabled && (
+          <div className="cloud-auth-panel">
+            <div>
+              <strong>跨设备云存档</strong>
+              <small>{cloudSession ? `${cloudSession.user.username} · ${cloudStatus}` : '登录后可在其他设备继续这一世'}</small>
+            </div>
+            {cloudSession ? (
+              <button className="text-button" onClick={() => void onCloudLogout()}>退出</button>
+            ) : (
+              <div className="cloud-auth-actions">
+                <button className="text-button" onClick={() => onCloudAuth('login')}>登录</button>
+                <button className="text-button" onClick={() => onCloudAuth('register')}>注册</button>
+              </div>
+            )}
+          </div>
+        )}
+        {cloudError && <div className="feedback-banner" role="alert"><span>{cloudError}</span>{cloudSession && cloudStatus === '同步失败' && <button className="text-button" onClick={onCloudRetry}>重试同步</button>}</div>}
       </section>
     </div>
   );
@@ -1023,7 +1419,7 @@ const BrandLogo = () => (
 );
 
 const TabButton = ({ active, label, icon, badge, onClick }: { active: boolean; label: string; icon: string; badge?: number; onClick: () => void }) => (
-  <button className={`tab-button ${active ? 'active' : ''}`} onClick={onClick}>
+  <button className={`tab-button ${active ? 'active' : ''}`} aria-current={active ? 'page' : undefined} onClick={onClick}>
     <span className="tab-icon" aria-hidden="true">{icon}</span>{label}{badge ? <span className="tab-badge">{badge}</span> : null}
   </button>
 );
@@ -1048,7 +1444,7 @@ const JourneyMap = ({ game }: { game: GameState }) => {
   const reachedCount = milestones.filter((milestone) => milestone.reached).length;
   return (
     <section className="journey-map paper-card">
-      <div className="journey-map-heading"><div><div className="eyebrow">LIFE PATH · 本世道途</div><h3>这一世已经走到第 {reachedCount} 道路标</h3></div><span>{reachedCount}/{milestones.length}</span></div>
+      <div className="journey-map-heading"><div><div className="eyebrow">LIFE PATH · 本世道途</div><h3>这一世，已留下 {reachedCount} 处足迹</h3></div><span>{reachedCount}/{milestones.length}</span></div>
       <div className="journey-rail">
         {milestones.map((milestone, index) => (
           <div className={`journey-stop ${milestone.reached ? 'reached' : ''}`} key={milestone.label}>
@@ -1061,7 +1457,16 @@ const JourneyMap = ({ game }: { game: GameState }) => {
   );
 };
 
-const LedgerView = ({ game, entries, onRead, onReadAll, action, now, offlineSummary, nextStepSuggestion, onDismissOfflineSummary, pendingEvent, onOpenPendingEvent }: {
+const JourneyGuide = ({ game, onNavigate }: { game: GameState; onNavigate: (tab: GuideTab) => void }) => {
+  const guide = getJourneyGuidance(game);
+  return <section className="journey-guide paper-card">
+    <span className="guide-seal" aria-hidden="true">宜</span>
+    <div className="guide-copy"><div className="eyebrow">A NOTE FOR TODAY · 今日一笺</div><h3>{guide.title}</h3><p>{guide.detail}</p></div>
+    <button className="primary-button" onClick={() => onNavigate(guide.tab)}>{guide.label} <span aria-hidden="true">↗</span></button>
+  </section>;
+};
+
+const LedgerView = ({ game, entries, onRead, onReadAll, action, now, offlineSummary, nextStepSuggestion, onDismissOfflineSummary, pendingEvent, onOpenPendingEvent, onNavigate }: {
   game: GameState;
   entries: LedgerEntry[];
   onRead: (entryId: string) => void;
@@ -1073,6 +1478,7 @@ const LedgerView = ({ game, entries, onRead, onReadAll, action, now, offlineSumm
   onDismissOfflineSummary: () => void;
   pendingEvent: PendingLedgerEvent | null;
   onOpenPendingEvent: (tab: PendingLedgerEvent['tab']) => void;
+  onNavigate: (tab: GuideTab) => void;
 }) => (
   <div className="view-stack">
     <section className="hero-panel illustrated-hero" style={{ '--hero-image': `url(${assetUrl(game.character.realm.major === 'foundation_establishment' ? 'assets/locations/cloudbreak-ridge.png' : 'assets/locations/qingstone-mountain.png')})` } as CSSProperties}>
@@ -1083,8 +1489,9 @@ const LedgerView = ({ game, entries, onRead, onReadAll, action, now, offlineSumm
       </div>
       <div className="hero-ornament">☽</div>
     </section>
+    <JourneyGuide game={game} onNavigate={onNavigate} />
+    {action && <CurrentActionCard action={action} now={now} />}
     <JourneyMap game={game} />
-    <CurrentActionCard action={action} now={now} />
     {offlineSummary && (
       <OfflineSummaryCard
         summary={offlineSummary}

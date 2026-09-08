@@ -109,4 +109,16 @@ describe('save parsing', () => {
     future.schemaVersion = CURRENT_SCHEMA_VERSION + 1;
     expect(() => parseSaveText(JSON.stringify(future))).toThrow('来自更新版本');
   });
+
+  it('keeps the cultivation record when only spirit stones are edited', () => {
+    const state = createNewGame('改石', [], undefined, [], now);
+    const edited = JSON.parse(JSON.stringify(state));
+    edited.inventory.spiritStones = 999;
+
+    const parsed = parseSaveText(JSON.stringify(edited));
+
+    expect(parsed.inventory.spiritStones).toBe(999);
+    expect(parsed.character.name).toBe('改石');
+    expect(parsed.ledger).toHaveLength(state.ledger.length);
+  });
 });

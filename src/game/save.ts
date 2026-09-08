@@ -35,6 +35,8 @@ import type {
 import { createStoryState, normalizeStoryState } from './story';
 
 export const CURRENT_SCHEMA_VERSION = 18;
+export const SAVE_BACKUP_KEY = `${SAVE_KEY}-backup`;
+export const SAVE_BACKUP_2_KEY = `${SAVE_KEY}-backup-2`;
 
 const createId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -543,10 +545,8 @@ export const normalizeGameState = (input: GameState): GameState => {
   return state;
 };
 
-export const loadGame = (): GameState | null => {
-  const raw = localStorage.getItem(SAVE_KEY);
+const tryParseStoredSave = (raw: string | null): GameState | null => {
   if (!raw) return null;
-
   try {
     return parseSaveText(raw);
   } catch {
@@ -554,8 +554,49 @@ export const loadGame = (): GameState | null => {
   }
 };
 
+export const loadGame = (): GameState | null => {
+  const primary = tryParseStoredSave(localStorage.getItem(SAVE_KEY));
+  if (primary) return primary;
+
+  const backup = tryParseStoredSave(localStorage.getItem(SAVE_BACKUP_KEY));
+  const backup2 = tryParseStoredSave(localStorage.getItem(SAVE_BACKUP_2_KEY));
+  const recovered = backup ?? backup2;
+  if (!recovered) return null;
+
+  // Restore the primary slot before the app's normal startup settlement writes again.
+  // This keeps a malformed primary from replacing the last known-good backup.
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify(recovered));
+  } catch {
+    // The in-memory recovery is still usable even when storage is unavailable.
+  }
+  return recovered;
+};
+
 export const saveGame = (state: GameState) => {
-  localStorage.setItem(SAVE_KEY, JSON.stringify(state));
+  const serialized = JSON.stringify(state);
+  const current = localStorage.getItem(SAVE_KEY);
+  const previousBackup = localStorage.getItem(SAVE_BACKUP_KEY);
+
+  // Rotate two snapshots so an interrupted/manual edit can fall back more than once.
+  if (previousBackup) localStorage.setItem(SAVE_BACKUP_2_KEY, previousBackup);
+  if (current) localStorage.setItem(SAVE_BACKUP_KEY, current);
+  localStorage.setItem(SAVE_KEY, serialized);
+};
+
+export const subscribeToSaveChanges = (listener: (state: GameState | null) => void) => {
+  const handleStorage = (event: StorageEvent) => {
+    if (event.key !== SAVE_KEY) return;
+    if (event.newValue === null) {
+      listener(null);
+      return;
+    }
+    const incoming = tryParseStoredSave(event.newValue);
+    if (incoming) listener(incoming);
+  };
+
+  window.addEventListener('storage', handleStorage);
+  return () => window.removeEventListener('storage', handleStorage);
 };
 
 export const startNextLife = (
@@ -572,6 +613,8 @@ export const startNextLife = (
 
 export const clearGame = () => {
   localStorage.removeItem(SAVE_KEY);
+  localStorage.removeItem(SAVE_BACKUP_KEY);
+  localStorage.removeItem(SAVE_BACKUP_2_KEY);
 };
 
 export const downloadSave = (state: GameState) => {

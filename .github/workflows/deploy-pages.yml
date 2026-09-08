@@ -31,6 +31,9 @@ jobs:
         run: npm ci
 
       - name: Build
+        env:
+          # Repository variable can override this when a custom Worker domain is used.
+          VITE_CLOUD_SAVE_API_URL: ${{ vars.VITE_CLOUD_SAVE_API_URL || 'https://immortal-ledger.zpzlxc.workers.dev/api' }}
         run: npm run build
 
       - name: Setup Pages

@@ -8,7 +8,13 @@
     "build": "tsc -b && vite build",
     "test": "vitest run",
     "test:watch": "vitest",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "worker:typecheck": "tsc -p worker/tsconfig.json",
+    "worker:dev": "wrangler dev --config worker/wrangler.toml",
+    "worker:migrate:local": "wrangler d1 migrations apply zpzlxc --local --config worker/wrangler.toml",
+    "worker:migrate:remote": "wrangler d1 migrations apply zpzlxc --remote --config worker/wrangler.toml",
+    "worker:build": "tsc -b && vite build --mode worker",
+    "worker:deploy": "npm run worker:build && wrangler deploy --config worker/wrangler.toml"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
@@ -18,8 +24,11 @@
     "vite": "latest"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260828.1",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
-    "vitest": "^4.1.11"
+    "miniflare": "5.20260826.0-alpha",
+    "vitest": "^4.1.11",
+    "wrangler": "^4.127.0"
   }
 }
