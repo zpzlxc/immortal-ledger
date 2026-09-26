@@ -21,6 +21,10 @@ type SaveRow = {
   updated_at: number;
 };
 
+type SaveOwner =
+  | { kind: 'player'; id: string }
+  | { kind: 'room'; id: string };
+
 type SaveResponse = {
   revision: number;
   schemaVersion: number;
@@ -34,7 +38,15 @@ const MAX_SUPPORTED_SCHEMA_VERSION = 18;
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
 // Cloudflare Workers rejects PBKDF2 iteration counts above 100,000.
 const PASSWORD_ITERATIONS = 100_000;
-const REQUIRED_TABLES = ['players', 'sessions', 'game_saves', 'game_save_history'] as const;
+const REQUIRED_TABLES = [
+  'players',
+  'sessions',
+  'game_saves',
+  'game_save_history',
+  'share_rooms',
+  'share_saves',
+  'share_save_history',
+] as const;
 
 class HttpError extends Error {
   constructor(
@@ -215,10 +227,54 @@ const createSession = async (env: Env, playerId: string) => {
   return token;
 };
 
+const roomAuthorization = (request: Request) => {
+  const authorization = request.headers.get('Authorization') ?? '';
+  if (!authorization.startsWith('Room ')) return null;
+  const value = authorization.slice(5).trim();
+  const separator = value.indexOf('.');
+  if (separator <= 0) return null;
+  const roomId = value.slice(0, separator);
+  const accessToken = value.slice(separator + 1);
+  if (!/^[0-9a-f-]{36}$/iu.test(roomId) || !/^[0-9a-f]{64}$/iu.test(accessToken)) return null;
+  return { roomId, accessToken };
+};
+
+const requireRoom = async (request: Request, env: Env): Promise<SaveOwner> => {
+  const credentials = roomAuthorization(request);
+  if (!credentials) throw new HttpError(401, '请先打开有效的专属云存档链接');
+  const row = await env.DB.prepare(
+    'SELECT id FROM share_rooms WHERE id = ? AND access_token_hash = ?',
+  ).bind(credentials.roomId, await sha256Hex(credentials.accessToken)).first<{ id: string }>();
+  if (!row) throw new HttpError(401, '专属云存档链接无效或已失效');
+  await env.DB.prepare('UPDATE share_rooms SET last_used_at = ? WHERE id = ?').bind(Date.now(), row.id).run();
+  return { kind: 'room', id: row.id };
+};
+
+const requireSaveOwner = async (request: Request, env: Env): Promise<SaveOwner> => {
+  if (getBearerToken(request)) return { kind: 'player', id: (await requirePlayer(request, env)).id };
+  return requireRoom(request, env);
+};
+
+const handleCreateRoom = async (env: Env) => {
+  const roomId = crypto.randomUUID();
+  const accessToken = randomHex(32);
+  const now = Date.now();
+  try {
+    await env.DB.prepare(
+      'INSERT INTO share_rooms (id, access_token_hash, created_at, last_used_at) VALUES (?, ?, ?, ?)',
+    ).bind(roomId, await sha256Hex(accessToken), now, now).run();
+  } catch (error) {
+    console.error('Share room creation failed', error);
+    throw new HttpError(503, '专属云存档创建失败，请稍后重试');
+  }
+  return jsonResponse({ roomId, accessToken });
+};
+
 const handleHealth = async (env: Env) => {
   try {
+    const placeholders = REQUIRED_TABLES.map(() => '?').join(', ');
     const result = await env.DB.prepare(
-      "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (?, ?, ?, ?)",
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (${placeholders})`,
     ).bind(...REQUIRED_TABLES).all<{ name: string }>();
     const tables = result.results.map((row) => row.name).sort();
     const ready = REQUIRED_TABLES.every((table) => tables.includes(table));
@@ -316,9 +372,17 @@ const saveResponse = (row: SaveRow) => ({
   updatedAt: row.updated_at,
 });
 
-const getCurrentSave = async (env: Env, playerId: string, slot: string) => env.DB.prepare(
-  'SELECT revision, schema_version, state_json, created_at, updated_at FROM game_saves WHERE player_id = ? AND slot = ?',
-).bind(playerId, slot).first<SaveRow>();
+const saveTables = (owner: SaveOwner) => owner.kind === 'player'
+  ? { save: 'game_saves', history: 'game_save_history', column: 'player_id' }
+  : { save: 'share_saves', history: 'share_save_history', column: 'room_id' };
+
+const getCurrentSave = async (env: Env, owner: SaveOwner, slot: string) => {
+  const tables = saveTables(owner);
+  return env.DB.prepare(
+    `SELECT revision, schema_version, state_json, created_at, updated_at
+     FROM ${tables.save} WHERE ${tables.column} = ? AND slot = ?`,
+  ).bind(owner.id, slot).first<SaveRow>();
+};
 
 const conflictResponse = (row: SaveRow | null) => jsonResponse({
   error: '云端存档已经更新，请先同步最新版本',
@@ -326,14 +390,15 @@ const conflictResponse = (row: SaveRow | null) => jsonResponse({
 }, 409);
 
 const handleGetSave = async (request: Request, env: Env) => {
-  const player = await requirePlayer(request, env);
+  const owner = await requireSaveOwner(request, env);
   const slot = readSlot(new URL(request.url).searchParams.get('slot'));
-  const row = await getCurrentSave(env, player.id, slot);
+  const row = await getCurrentSave(env, owner, slot);
   return jsonResponse({ save: row ? saveResponse(row) : null, serverTime: Date.now() });
 };
 
 const handlePutSave = async (request: Request, env: Env) => {
-  const player = await requirePlayer(request, env);
+  const owner = await requireSaveOwner(request, env);
+  const tables = saveTables(owner);
   const body = await parseJsonBody<{ slot?: unknown; expectedRevision?: unknown; state?: unknown }>(request);
   const slot = readSlot(body.slot);
   const expectedRevision = Number(body.expectedRevision ?? 0);
@@ -341,7 +406,7 @@ const handlePutSave = async (request: Request, env: Env) => {
     throw new HttpError(400, '存档版本号无效');
   }
   const { state, stateJson, schemaVersion } = readSaveState(body.state);
-  const current = await getCurrentSave(env, player.id, slot);
+  const current = await getCurrentSave(env, owner, slot);
   if (!current && expectedRevision !== 0) return conflictResponse(null);
   if (current && current.revision !== expectedRevision) return conflictResponse(current);
 
@@ -350,38 +415,38 @@ const handlePutSave = async (request: Request, env: Env) => {
   const statements = current
     ? [
       env.DB.prepare(
-        `UPDATE game_saves
+        `UPDATE ${tables.save}
          SET revision = ?, schema_version = ?, state_json = ?, updated_at = ?
-         WHERE player_id = ? AND slot = ? AND revision = ?`,
-      ).bind(nextRevision, schemaVersion, stateJson, now, player.id, slot, expectedRevision),
+         WHERE ${tables.column} = ? AND slot = ? AND revision = ?`,
+      ).bind(nextRevision, schemaVersion, stateJson, now, owner.id, slot, expectedRevision),
       env.DB.prepare(
-        `INSERT INTO game_save_history
-         (player_id, slot, revision, schema_version, state_json, saved_at)
+        `INSERT INTO ${tables.history}
+         (${tables.column}, slot, revision, schema_version, state_json, saved_at)
          VALUES (?, ?, ?, ?, ?, ?)`,
-      ).bind(player.id, slot, nextRevision, schemaVersion, stateJson, now),
+      ).bind(owner.id, slot, nextRevision, schemaVersion, stateJson, now),
       env.DB.prepare(
-        'DELETE FROM game_save_history WHERE player_id = ? AND slot = ? AND revision <= ?',
-      ).bind(player.id, slot, Math.max(0, nextRevision - 30)),
+        `DELETE FROM ${tables.history} WHERE ${tables.column} = ? AND slot = ? AND revision <= ?`,
+      ).bind(owner.id, slot, Math.max(0, nextRevision - 30)),
     ]
     : [
       env.DB.prepare(
-        `INSERT INTO game_saves
-         (player_id, slot, revision, schema_version, state_json, created_at, updated_at)
+        `INSERT INTO ${tables.save}
+         (${tables.column}, slot, revision, schema_version, state_json, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ).bind(player.id, slot, nextRevision, schemaVersion, stateJson, now, now),
+      ).bind(owner.id, slot, nextRevision, schemaVersion, stateJson, now, now),
       env.DB.prepare(
-        `INSERT INTO game_save_history
-         (player_id, slot, revision, schema_version, state_json, saved_at)
+        `INSERT INTO ${tables.history}
+         (${tables.column}, slot, revision, schema_version, state_json, saved_at)
          VALUES (?, ?, ?, ?, ?, ?)`,
-      ).bind(player.id, slot, nextRevision, schemaVersion, stateJson, now),
+      ).bind(owner.id, slot, nextRevision, schemaVersion, stateJson, now),
     ];
   try {
     const results = await env.DB.batch(statements);
     if (current && results[0]?.meta.changes !== 1) {
-      return conflictResponse(await getCurrentSave(env, player.id, slot));
+      return conflictResponse(await getCurrentSave(env, owner, slot));
     }
   } catch (error) {
-    const latest = await getCurrentSave(env, player.id, slot);
+    const latest = await getCurrentSave(env, owner, slot);
     if (latest && latest.revision !== expectedRevision) return conflictResponse(latest);
     if (!current && latest) return conflictResponse(latest);
     throw error;
@@ -402,6 +467,7 @@ const routeApi = async (request: Request, env: Env): Promise<Response> => {
   if (url.pathname === '/api/health' && request.method === 'GET') {
     return handleHealth(env);
   }
+  if (url.pathname === '/api/rooms' && request.method === 'POST') return handleCreateRoom(env);
   if (url.pathname === '/api/auth/register' && request.method === 'POST') return handleRegister(request, env);
   if (url.pathname === '/api/auth/login' && request.method === 'POST') return handleLogin(request, env);
   if (url.pathname === '/api/auth/me' && request.method === 'GET') return handleMe(request, env);

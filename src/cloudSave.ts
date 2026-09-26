@@ -1,6 +1,7 @@
 import type { GameState } from './game/types';
 
 const CLOUD_SESSION_KEY = 'immortal-ledger-cloud-session-v1';
+const CLOUD_SHARE_SESSION_KEY = 'immortal-ledger-cloud-share-session-v1';
 const configuredApiUrl = import.meta.env.VITE_CLOUD_SAVE_API_URL?.trim() ?? '';
 const API_BASE_URL = (configuredApiUrl || '/api').replace(/\/$/, '');
 
@@ -10,6 +11,12 @@ export type CloudSession = {
     id: string;
     username: string;
   };
+};
+
+export type CloudShareSession = {
+  roomId: string;
+  accessToken: string;
+  link: string;
 };
 
 export type CloudSaveRecord = {
@@ -47,15 +54,72 @@ const setCloudSession = (session: CloudSession) => {
   window.localStorage.setItem(CLOUD_SESSION_KEY, JSON.stringify(session));
 };
 
+const isCloudShareSession = (value: unknown): value is CloudShareSession => {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<CloudShareSession>;
+  return Boolean(
+    typeof candidate.roomId === 'string' && /^[0-9a-f-]{36}$/iu.test(candidate.roomId)
+      && typeof candidate.accessToken === 'string' && /^[0-9a-f]{64}$/iu.test(candidate.accessToken)
+      && typeof candidate.link === 'string' && candidate.link.length > 0,
+  );
+};
+
+const getShareSessionFromLocation = (): CloudShareSession | null => {
+  if (typeof window === 'undefined') return null;
+  const match = window.location.pathname.match(/^\/room\/([0-9a-f-]{36})$/iu);
+  const accessToken = window.location.hash.slice(1);
+  if (!match || !/^[0-9a-f]{64}$/iu.test(accessToken)) return null;
+  const roomId = match[1];
+  return { roomId, accessToken, link: `${window.location.origin}/room/${roomId}#${accessToken}` };
+};
+
+const setCloudShareSession = (session: CloudShareSession) => {
+  window.localStorage.setItem(CLOUD_SHARE_SESSION_KEY, JSON.stringify(session));
+};
+
+export const getCloudShareSession = (): CloudShareSession | null => {
+  const fromLocation = getShareSessionFromLocation();
+  if (fromLocation) {
+    setCloudShareSession(fromLocation);
+    return fromLocation;
+  }
+  const raw = window.localStorage.getItem(CLOUD_SHARE_SESSION_KEY);
+  if (raw) {
+    try {
+      const session = JSON.parse(raw) as unknown;
+      if (isCloudShareSession(session)) return session;
+    } catch {
+      // Ignore a malformed local session and stay in local-only mode.
+    }
+  }
+  return null;
+};
+
+export const hasCloudAccess = () => Boolean(getCloudSession() || getCloudShareSession());
+
 export const clearCloudSession = () => {
   window.localStorage.removeItem(CLOUD_SESSION_KEY);
 };
 
-const requestJson = async <T>(path: string, init: RequestInit = {}): Promise<T> => {
+export const clearCloudShareSession = () => {
+  window.localStorage.removeItem(CLOUD_SHARE_SESSION_KEY);
+  if (typeof window !== 'undefined' && window.location.hash) {
+    window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+  }
+};
+
+const getCloudAuthorization = () => {
   const session = getCloudSession();
+  if (session) return `Bearer ${session.token}`;
+  const shareSession = getCloudShareSession();
+  return shareSession ? `Room ${shareSession.roomId}.${shareSession.accessToken}` : null;
+};
+
+const requestJson = async <T>(path: string, init: RequestInit = {}): Promise<T> => {
   const headers = new Headers(init.headers);
   headers.set('Content-Type', 'application/json');
-  if (session) headers.set('Authorization', `Bearer ${session.token}`);
+  const authorization = getCloudAuthorization();
+  if (authorization) headers.set('Authorization', authorization);
   let response: Response;
   try {
     response = await fetch(`${API_BASE_URL}${path}`, { ...init, headers });
@@ -79,6 +143,7 @@ export const registerCloudAccount = async (username: string, password: string) =
   });
   const session = { token: payload.token, user: payload.user };
   setCloudSession(session);
+  clearCloudShareSession();
   return session;
 };
 
@@ -89,6 +154,7 @@ export const loginCloudAccount = async (username: string, password: string) => {
   });
   const session = { token: payload.token, user: payload.user };
   setCloudSession(session);
+  clearCloudShareSession();
   return session;
 };
 
@@ -98,6 +164,18 @@ export const logoutCloudAccount = async () => {
   } finally {
     clearCloudSession();
   }
+};
+
+export const createCloudShareRoom = async () => {
+  const payload = await requestJson<{ roomId: string; accessToken: string }>('/rooms', {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+  const link = `${window.location.origin}/room/${payload.roomId}#${payload.accessToken}`;
+  const session = { ...payload, link };
+  clearCloudSession();
+  setCloudShareSession(session);
+  return session;
 };
 
 export const fetchCloudSave = async (slot = 'default') => {

@@ -12,10 +12,16 @@ const state = {
 };
 let mf: Miniflare;
 let db: Awaited<ReturnType<Miniflare['getD1Database']>>;
-const request = async (path: string, method = 'GET', body?: unknown, token?: string) => {
+const request = async (
+  path: string,
+  method = 'GET',
+  body?: unknown,
+  token?: string,
+  scheme = 'Bearer',
+) => {
   const response = await mf.dispatchFetch(`https://example.com/api${path}`, {
     method,
-    headers: { Origin: origin, 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    headers: { Origin: origin, 'Content-Type': 'application/json', ...(token ? { Authorization: `${scheme} ${token}` } : {}) },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   });
   return { status: response.status, headers: response.headers, body: await response.json() as any };
@@ -30,8 +36,10 @@ describe('Worker auth and cloud saves (real workerd + D1)', () => {
       d1Databases: ['DB'], bindings: { ALLOWED_ORIGIN: origin },
     }));
     db = await mf.getD1Database('DB');
-    const migration = readFileSync('worker/migrations/0001_cloud_saves.sql', 'utf8');
-    await db.batch(migration.split(';').filter(sql => sql.trim()).map(sql => db.prepare(sql)));
+    for (const migrationFile of ['0001_cloud_saves.sql', '0002_share_rooms.sql']) {
+      const migration = readFileSync(`worker/migrations/${migrationFile}`, 'utf8');
+      await db.batch(migration.split(';').filter(sql => sql.trim()).map(sql => db.prepare(sql)));
+    }
   });
   afterAll(async () => { await mf?.dispose(); });
 
@@ -94,5 +102,21 @@ describe('Worker auth and cloud saves (real workerd + D1)', () => {
     expect((await request('/save', 'GET', undefined, other.body.token)).body.save).toBeNull();
     expect((await request('/save')).status).toBe(401);
     expect((await request('/save', 'PUT', { state: { ...state, schemaVersion: 999 } }, token)).status).toBe(422);
+  });
+
+  it('creates a registration-free room capability and round-trips its save separately', async () => {
+    const created = await request('/rooms', 'POST', {});
+    expect(created.status).toBe(200);
+    expect(created.body.roomId).toMatch(/^[0-9a-f-]{36}$/iu);
+    expect(created.body.accessToken).toMatch(/^[0-9a-f]{64}$/iu);
+
+    const roomToken = `${created.body.roomId}.${created.body.accessToken}`;
+    expect((await request('/save', 'GET', undefined, roomToken, 'Room')).status).toBe(200);
+    const first = await request('/save', 'PUT', { expectedRevision: 0, state }, roomToken, 'Room');
+    expect(first.status).toBe(200);
+    expect((await request('/save', 'GET', undefined, roomToken, 'Room')).body.save.state).toEqual(state);
+    expect((await request('/save', 'PUT', { expectedRevision: 0, state }, roomToken, 'Room')).status).toBe(409);
+    expect((await request('/save', 'GET', undefined, `${created.body.roomId}.${'0'.repeat(64)}`, 'Room')).status).toBe(401);
+    expect((await request('/save', 'GET')).status).toBe(401);
   });
 });

@@ -40,6 +40,8 @@
 
    部署完成后打开 Wrangler 输出的 `https://<你的名称>.<你的子域>.workers.dev` 地址，在初页注册或登录云存档账号即可。
 
+   初页也提供“创建专属链接”。它不需要注册：Worker 生成随机房间密钥，浏览器把密钥放在链接的 `#` 片段中；拿到完整链接的设备打开后即可访问同一份存档。专属链接相当于密码，请只分享给可信设备或人员。
+
 ## 本地联调
 
 如果希望本地和线上游戏共用账号与进度，使用已部署的 Worker API。先在项目根目录创建 `.env.local`（只包含 API 地址，不包含任何密钥）：
@@ -70,7 +72,7 @@ VITE_CLOUD_SAVE_API_URL=https://<你的 Worker 地址>/api npm run build
 
 ## 使用 GitHub Pages 自动部署
 
-当前仓库已有 GitHub Pages 工作流，并新增了 Cloudflare Worker 工作流。建议把 Cloudflare Token 只放在 GitHub Actions 的加密 Secret 中：
+当前仓库已有 GitHub Pages 工作流，并新增了 Cloudflare Worker 工作流。推送到 `main` 会自动执行测试、Worker 类型检查、D1 远端迁移、构建部署，并请求 `/api/health` 验证线上表结构；Pages 工作流也会同步构建发布前端。建议把 Cloudflare Token 只放在 GitHub Actions 的加密 Secret 中：
 
 1. 先在 GitHub 仓库的 **Settings → Secrets and variables → Actions** 中创建 Secret：
 
@@ -85,7 +87,7 @@ VITE_CLOUD_SAVE_API_URL=https://<你的 Worker 地址>/api npm run build
    CLOUDFLARE_ACCOUNT_ID = fd05e0f222e36e163feb663cb3b4bafa
    ```
 
-   `VITE_CLOUD_SAVE_API_URL` 不是密码，只是前端 API 地址；如果不设置，当前 Pages 工作流默认使用 `https://immortal-ledger.zpzlxc.workers.dev/api`。`CLOUDFLARE_API_TOKEN` 必须放在 Secrets，不能放 Variables。
+   `VITE_CLOUD_SAVE_API_URL` 不是密码，只是前端 API 地址；如果不设置，当前 Pages 工作流默认使用 `https://immortal-ledger.zpzlxc.workers.dev/api`。如使用自定义 Worker 域名，可再设置 `CLOUDFLARE_WORKER_URL`，用于部署后的健康检查。`CLOUDFLARE_API_TOKEN` 必须放在 Secrets，不能放 Variables。
 
 3. 先在 Actions 手动运行 **Deploy Cloudflare Worker**，或者推送一次包含 Worker 配置的提交。Worker 成功部署后，把 Wrangler 输出的 Worker URL 填回 `VITE_CLOUD_SAVE_API_URL`。
 
@@ -98,7 +100,7 @@ VITE_CLOUD_SAVE_API_URL=https://<你的 Worker 地址>/api npm run build
 - 新设备打开页面后，在“初页”先登录；有云端记录会自动拉取，没有记录则可开始新的一世。
 - 同一账号默认使用 `default` 存档槽。每次成功保存都会增加版本号；两台设备同时保存时，客户端会提示并采用云端较新的记录，本地旧版本仍在本地备份链和导出文件中。
 - 页面仍提供导入/导出。云端不是独立备份系统，重要节点建议点击“导出”保存 JSON 到自己的位置。
-- 账号密码不会写入存档；Worker 使用 PBKDF2 派生密码哈希，只在浏览器本地保存登录令牌。正式公开运营前仍建议增加登录限流、邮箱找回或第三方身份认证。
+- 账号密码不会写入存档；账号模式下 Worker 使用 PBKDF2 派生密码哈希，只在浏览器本地保存登录令牌。专属链接模式使用随机 256 位房间密钥，密钥只放在 URL 片段和浏览器本地，不会随页面请求发送给 Worker；拥有完整链接即可访问该房间。
 - 当前 Worker 校验存档结构和资源数量，但它不是防作弊服务器；如果未来需要排行榜或可信经济，需要把关键游戏动作改为由 Worker 结算。
 
 Cloudflare 官方当前说明 D1 免费额度包括每天 500 万行读取、10 万行写入和 5 GB 存储，并且 Workers Free 持续包含用于原型/实验的 D1 能力；超过每日免费额度的请求会报错，因此仍要避免高频整档写入。详见 [D1 Pricing](https://developers.cloudflare.com/d1/platform/pricing/)。
@@ -108,6 +110,7 @@ Cloudflare 官方当前说明 D1 免费额度包括每天 500 万行读取、10 
 - D1 的 `database_id`、数据库名称、Worker 名称和 `ALLOWED_ORIGIN` 是标识或配置，不等于数据库密码；公开源码本身不会凭这些值直接获得 D1 读写权限。
 - 绝不能提交 Cloudflare API Token、`CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_API_KEY`、`.dev.vars`、`.env.local` 或其他真实密钥。项目的 `.gitignore` 已默认忽略这些本地配置文件。
 - `ALLOWED_ORIGIN` 只是浏览器 CORS 限制，不是鉴权。真正保护存档的是 Worker 的 Bearer 会话认证。
+- 专属链接的密钥本身就是访问凭证，不能公开贴出；如果链接泄露，应退出当前链接并创建新的专属链接。正式公开运营前仍建议增加登录/建房限流、过期房间清理和可撤销密钥。
 - 当前账号接口是个人游戏 MVP，公开运行前建议再加 Cloudflare Rate Limiting/Turnstile、登录失败限流和过期会话清理，避免机器人刷注册、登录和 D1 免费额度。
 
 ## 注册接口故障回归
@@ -116,4 +119,4 @@ Cloudflare 官方当前说明 D1 免费额度包括每天 500 万行读取、10 
 
 `npm test -- worker/tests/cloud-save.test.ts` 使用实际 workerd 和本地 D1，覆盖密码参数、注册登录退出、会话写入失败回滚、存档读写、账号隔离及并发版本冲突。独立核对 100,000 次派生结果，避免本地运行时未实施线上上限而漏报。Worker 部署工作流在迁移和部署前执行回归测试。
 
-修复已部署至 `https://immortal-ledger.zpzlxc.workers.dev`，版本 `21fc4a42-442e-4ac1-8513-2fa5f6217ac7`。线上临时账号验证通过：注册 201、登录 200、存档上传下载 200、旧版本写入 409、注销后访问 401，以及 localhost CORS 预检 204。全量 66 项测试、Worker 类型检查和构建均通过。
+本项目使用原有的 `immortal-ledger` Worker：`https://immortal-ledger.zpzlxc.workers.dev`。它与此前的 `immortal-ledger-zpzlxc-cloud` Worker 绑定同一个 `zpzlxc` D1 数据库；后续部署以原有 Worker 为目标。

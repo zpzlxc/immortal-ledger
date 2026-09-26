@@ -308,6 +308,9 @@ export const normalizeGameState = (input: GameState): GameState => {
   state.character.realm = normalizeRealm(input.character.realm);
   if (state.character.currentAction) {
     const action = state.character.currentAction;
+    if (action.type !== 'foundation_trial' || !['steady', 'bold'].includes(action.foundationTrialApproachId ?? '')) {
+      delete action.foundationTrialApproachId;
+    }
     const cycleDurationMinutes = Number(action.cycleDurationMinutes);
     const plannedCycles = Number(action.plannedCycles);
     const completedCycles = Number(action.completedCycles);

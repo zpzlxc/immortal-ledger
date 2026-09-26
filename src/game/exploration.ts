@@ -592,6 +592,42 @@ export const EXPLORATION_EVENTS: Record<ExplorationEventId, ExplorationEventDefi
       { id: 'answer-as-yourself', label: '只报自己的名字', summary: '你没有替任何前尘作答。云海散开时，一道属于你自己的路出现在脚下。', effects: { fortune: 3, spiritSense: 2, cultivation: 20 } },
     ],
   },
+  'cloudbreak-missing-page': {
+    id: 'cloudbreak-missing-page',
+    locationId: 'cloudbreak-ridge',
+    title: '云门后的缺页',
+    eyebrow: 'THE MISSING PAGE · 云上第一章',
+    summary: '山门背后没有仙府，只有一座被风翻动的空书架。你的长生簿忽然自行翻页：一张写着陌生人结局的纸，正卡在最高处。纸背却是你自己的笔迹。',
+    condition: (state) => state.completedExplorationEventIds.includes('cloudbreak-stone-gate'),
+    choices: [
+      { id: 'take-the-page', label: '取下那张纸', summary: '你将缺页收入长生簿。陌生人的结局化成墨迹，留下通往云中墨河的方位。', consequenceHint: '获得残页与神识，并留下这次选择', effects: { techniqueFragments: 3, spiritSense: 2, karma: 2 } },
+      { id: 'copy-the-margin', label: '只誊下页边批注', summary: '你没有替前人收走结局，只抄下页边的一句提醒：河水可以洗掉名字，却洗不掉选择。', consequenceHint: '获得心境与气运，并留下这次选择', effects: { mentalState: 5, fortune: 2, cultivation: 20 } },
+    ],
+  },
+  'cloudbreak-ink-river': {
+    id: 'cloudbreak-ink-river',
+    locationId: 'cloudbreak-ridge',
+    title: '墨河不渡无字人',
+    eyebrow: 'THE INK RIVER · 云上第二章',
+    summary: '沿批注走到尽头，一条黑色的河悬在云中。摆渡人指着空白船票，说过河的人须交出一段被记住的往事。你在水面看见青石山的铃、古井的影，还有山门后的那张缺页。',
+    condition: (state) => state.completedExplorationEventIds.includes('cloudbreak-missing-page'),
+    choices: [
+      { id: 'tell-the-truth', label: '讲出本世的一次选择', summary: '你把一次真实的犹豫讲给摆渡人。船票浮出字迹，墨河没有抹去那段往事，反而替你照亮了对岸。', consequenceHint: '获得修为与心境，因果减轻', effects: { cultivation: 30, mentalState: 4, karma: -1 } },
+      { id: 'offer-the-page', label: '以缺页或批注抵船资', summary: '你把从书架带来的文字放进河里。河面短暂亮起，原来别人的故事也可以成为渡河的灯。', consequenceHint: '获得残页与神识，因果加深', effects: { techniqueFragments: 3, spiritSense: 2, karma: 1 } },
+    ],
+  },
+  'cloudbreak-last-margin': {
+    id: 'cloudbreak-last-margin',
+    locationId: 'cloudbreak-ridge',
+    title: '空白处由谁续写',
+    eyebrow: 'THE LAST MARGIN · 云上终章',
+    summary: '河对岸是一方没有名字的石案，案上摆着许多未写完的长生簿。你终于明白：它们不是等待某个天命之人补全，而是等待每一位路过者决定，要把自己的故事留给谁。',
+    condition: (state) => state.completedExplorationEventIds.includes('cloudbreak-ink-river'),
+    choices: [
+      { id: 'leave-a-road', label: '为后来者留一条路', summary: '你在空白处写下沿途的危险与渡河的方法。墨迹没有署名，却在云门外化作一道可辨认的路标。', effects: { karma: 3, mentalState: 6, cultivation: 36 } },
+      { id: 'keep-a-question', label: '留下一道未答的问题', summary: '你只写下一句“你愿意替谁记得”。石案没有给出答案，却还你一页属于自己的新篇章。', effects: { fortune: 3, spiritSense: 3, techniqueFragments: 4 } },
+    ],
+  },
   'nameless-returning-name': {
     id: 'nameless-returning-name',
     locationId: 'nameless-well',

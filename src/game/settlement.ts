@@ -17,6 +17,7 @@ import {
   settleCave,
 } from './cave';
 import { getCaveResearch } from './caveResearch';
+import { FOUNDATION_TRIALS, getFoundationTrialApproachError, getFoundationTrialIndex, type FoundationTrialApproachId } from './foundationTrials';
 import {
   EXPLORATION_LOCATIONS,
   getExplorationEvent,
@@ -77,7 +78,7 @@ import type {
   SettlementResult,
   TechniqueId,
 } from './types';
-import { createStoryState, recordStoryChoice } from './story';
+import { createStoryState, hasStoryChoice, recordStoryChoice } from './story';
 
 const MINUTE_MS = 60_000;
 
@@ -127,6 +128,14 @@ const getNextPersonEvent = (
     state.social.relationships['lin-qiu'].affinity >= 10
   ) {
     return PERSON_EVENTS['lin-qiu-ledger'];
+  }
+  if (
+    action.type === 'explore' &&
+    action.locationId === 'blackwind-valley' &&
+    hasCompletedPersonEvent(state, 'lin-qiu-ledger') &&
+    !hasCompletedPersonEvent(state, 'lin-qiu-seventh-page')
+  ) {
+    return PERSON_EVENTS['lin-qiu-seventh-page'];
   }
   if (
     action.type === 'study' &&
@@ -185,6 +194,18 @@ const getNextPersonEvent = (
     return PERSON_EVENTS['nameless-well-echo'];
   }
   if (
+    action.type === 'explore' &&
+    action.locationId === 'nameless-well' &&
+    hasCompletedPersonEvent(state, 'lin-qiu-seventh-page') &&
+    hasCompletedPersonEvent(state, 'nameless-well-soul') &&
+    !hasCompletedPersonEvent(state, 'lin-qiu-open-witness') &&
+    !hasCompletedPersonEvent(state, 'lin-qiu-sealed-witness')
+  ) {
+    return hasStoryChoice(state.story, 'person', 'lin-qiu-seventh-page', 'copy-the-page')
+      ? PERSON_EVENTS['lin-qiu-open-witness']
+      : PERSON_EVENTS['lin-qiu-sealed-witness'];
+  }
+  if (
     action.type === 'foundation_trial' &&
     state.cultivationPath.auxiliaryTechniqueId &&
     hasCompletedPersonEvent(state, 'xuan-song-lesson') &&
@@ -236,6 +257,16 @@ const getNextExplorationEvent = (
       && (!event.condition || event.condition(state)),
   );
   if (availableEvents.length === 0) return null;
+  if (action.locationId === 'cloudbreak-ridge') {
+    const chapterIds: ExplorationEventId[] = [
+      'cloudbreak-stone-gate',
+      'cloudbreak-missing-page',
+      'cloudbreak-ink-river',
+      'cloudbreak-last-margin',
+    ];
+    const nextChapter = chapterIds.map((id) => availableEvents.find((event) => event.id === id)).find(Boolean);
+    if (nextChapter) return nextChapter;
+  }
   const freshEvents = availableEvents.filter((event) => event.id !== state.lastExplorationEventId);
   const eventPool = freshEvents.length > 0 ? freshEvents : availableEvents;
 
@@ -778,6 +809,9 @@ const actionResult = (
   let temperUsedHerb = false;
 
   if (actionType === 'foundation_trial') {
+    const trialIndex = getFoundationTrialIndex(state);
+    const approach = state.character.currentAction?.foundationTrialApproachId;
+    const trial = FOUNDATION_TRIALS[trialIndex];
     const stoneGain = randomInt(18, 30, random);
     const fragmentGain = randomInt(1, 2, random);
     inventory.spiritStones += stoneGain;
@@ -785,9 +819,51 @@ const actionResult = (
     cultivationGain = Math.floor(
       (24 + Math.min(12, character.realm.stage * 2)) * (1 + techniqueEffects.foundationTrialCultivationMultiplier),
     );
-    title = choose(['云外峰场归来', '试炼石阶尽头', '筑基后的一次远行']);
-    body = `${choose(ACTION_PLAN_NOTES.foundation_trial)}你在断云石台下找到灵石 ${stoneGain} 枚和功法残页 ${fragmentGain} 页，带回来的不只是收获，还有一段关于更高境界的模糊预感。`;
+    title = approach ? `${trial.title} · 完成` : choose(['云外峰场归来', '试炼石阶尽头', '筑基后的一次远行']);
+    body = approach
+      ? `${choose(ACTION_PLAN_NOTES.foundation_trial)}${trial.summary}`
+      : `${choose(ACTION_PLAN_NOTES.foundation_trial)}你在断云石台下找到灵石 ${stoneGain} 枚和功法残页 ${fragmentGain} 页，带回来的不只是收获，还有一段关于更高境界的模糊预感。`;
     changes.push(`灵石 +${stoneGain}`, `功法残页 +${fragmentGain}`, `修为 +${cultivationGain}`);
+    if (approach && trialIndex === 0) {
+      if (approach === 'steady') {
+        cultivationGain += 16;
+        changes.push('灵草 -1', '额外修为 +16');
+        body += '你以灵草护住经脉，石阶灵压反成了稳固道基的助力。';
+      } else {
+        const extraCultivation = state.cultivationPath.auxiliaryTechniqueId ? 30 : 24;
+        cultivationGain += extraCultivation;
+        character.attributes.mentalState = Math.max(0, character.attributes.mentalState - 2);
+        changes.push(`额外修为 +${extraCultivation}`, '心境 -2');
+        body += '你催动主修功法强行踏过石阶，修为大进，心神却留下了一丝疲惫。';
+      }
+    } else if (approach && trialIndex === 1) {
+      if (approach === 'bold') {
+        state.social.sect.reputation += 8;
+        state.social.sect.contribution += 3;
+        changes.push('宗门声望 +8', '宗门贡献 +3');
+        body += '令牌牵起旧阵中的门派印记，宗门也记下了这次破阵。';
+      } else {
+        inventory.techniqueFragments += 2;
+        changes.push('额外功法残页 +2');
+        body += '你独自推演出阵眼，从残阵里取回两页失落的口诀。';
+      }
+    } else if (approach === 'steady') {
+      const hasOldChoices = state.story.choiceHistory.length > 0;
+      character.attributes.mentalState += hasOldChoices ? 2 : 1;
+      if (hasOldChoices) character.attributes.fortune += 1;
+      changes.push(`心境 +${hasOldChoices ? 2 : 1}`, ...(hasOldChoices ? ['气运 +1'] : []));
+      body += hasOldChoices ? '你认出了幻象里的旧日选择，带着它们走过云门。' : '你安静地看过来路，心念比来时更加澄明。';
+    } else if (approach === 'bold') {
+      inventory.spiritStones += 20;
+      cultivationGain += 15;
+      character.attributes.mentalState = Math.max(0, character.attributes.mentalState - 3);
+      changes.push('额外灵石 +20', '额外修为 +15', '心境 -3');
+      body += '你斩断云门幻象，夺得更多灵石与灵气，也付出了心神的代价。';
+    }
+    if (approach) {
+      const trialFlag = `foundation-trial:${trialIndex + 1}:${approach}`;
+      if (!state.story.worldFlags.includes(trialFlag)) state.story.worldFlags.push(trialFlag);
+    }
     state.story.foundationTrialCount += 1;
     if (state.story.foundationTrialCount >= 3 && !state.story.worldFlags.includes('foundation-cloud-path-open')) {
       state.story.worldFlags.push('foundation-cloud-path-open');
@@ -1443,6 +1519,7 @@ export const getActionStartError = (
   researchId?: CaveResearchId,
   relationshipId?: RelationshipId,
   interactionId?: PersonInteractionId,
+  foundationTrialApproachId?: FoundationTrialApproachId,
 ) => {
   if (type === 'breakthrough') return getBreakthroughStartError(input, now);
   if (input.lifeStatus === 'dead') return '本世已经结束，不能再安排行动。';
@@ -1455,6 +1532,13 @@ export const getActionStartError = (
   }
   if (type === 'foundation_trial' && input.character.realm.major !== 'foundation_establishment') {
     return '筑基之后才能踏入试炼场。先继续修炼，跨过当前境界关隘。';
+  }
+  if (type === 'foundation_trial' && foundationTrialApproachId && input.story.foundationTrialCount >= 3) {
+    return '三关已经完成。重访试炼场无需重新选择解法。';
+  }
+  if (type === 'foundation_trial' && foundationTrialApproachId) {
+    const error = getFoundationTrialApproachError(input, foundationTrialApproachId);
+    if (error) return error;
   }
   if (type === 'golden_core_ordeal') {
     if (input.character.realm.major !== 'foundation_establishment' || input.character.realm.stage < getRealmStageCap('foundation_establishment')) {
@@ -1535,9 +1619,11 @@ export const startAction = (
   researchId?: CaveResearchId,
   relationshipId?: RelationshipId,
   interactionId?: PersonInteractionId,
+  foundationTrialApproachId?: FoundationTrialApproachId,
 ): GameState => {
   const state = structuredClone(input);
-  if (getActionStartError(state, type, locationId, missionId, now, researchId, relationshipId, interactionId)) return state;
+  const trialApproach = type === 'foundation_trial' ? foundationTrialApproachId : undefined;
+  if (getActionStartError(state, type, locationId, missionId, now, researchId, relationshipId, interactionId, trialApproach)) return state;
 
   const selectedLocationId = state.discoveredLocations.includes(locationId)
     ? locationId
@@ -1554,6 +1640,7 @@ export const startAction = (
   const durationMinutes = cycleDurationMinutes * plannedCycles;
   const duration = durationMinutes * MINUTE_MS;
   const choose = <T,>(items: readonly T[]) => pick(items, random);
+  const trialChoice = trialApproach ? FOUNDATION_TRIALS[getFoundationTrialIndex(state)][trialApproach] : null;
   state.character.currentAction = {
     id: `${now}-${type}`,
     type,
@@ -1570,17 +1657,22 @@ export const startAction = (
     ...(type === 'cave_research' && researchId ? { researchId } : {}),
     ...(type === 'person_interaction' && relationshipId ? { relationshipId } : {}),
     ...(type === 'person_interaction' && interactionId ? { interactionId } : {}),
+    ...(trialApproach ? { foundationTrialApproachId: trialApproach } : {}),
   };
+  if (type === 'foundation_trial' && getFoundationTrialIndex(state) === 0 && trialApproach === 'steady') {
+    state.inventory.herbs -= 1;
+  }
   state.lastSettledAt = now;
   state.ledger = [
     createLedgerEntry(
       'system',
       `已安排：${ACTIONS[type].label}`,
-      `${choose(ACTION_PLAN_NOTES[type])}${selectedLocation ? `${selectedLocation.label}：${selectedLocation.summary}` : getCaveResearch(researchId)?.summary ?? getPersonInteraction(interactionId)?.summary ?? ACTIONS[type].description}${plannedCycles > 1 ? `已经安排连续 ${plannedCycles} 轮，预计修行 ${formatPlanDuration(durationMinutes)}；触及关隘或伤势过重时会提前出关。` : `预计在 ${durationMinutes} 分钟后完成。`}你可以关闭网页，回来时查看结果。`,
+      `${choose(ACTION_PLAN_NOTES[type])}${trialChoice ? `${trialChoice.label}：${trialChoice.detail}` : selectedLocation ? `${selectedLocation.label}：${selectedLocation.summary}` : getCaveResearch(researchId)?.summary ?? getPersonInteraction(interactionId)?.summary ?? ACTIONS[type].description}${plannedCycles > 1 ? `已经安排连续 ${plannedCycles} 轮，预计修行 ${formatPlanDuration(durationMinutes)}；触及关隘或伤势过重时会提前出关。` : `预计在 ${durationMinutes} 分钟后完成。`}你可以关闭网页，回来时查看结果。`,
       [
         ACTIONS[type].label,
         getCaveResearch(researchId)?.label ?? '',
         getPersonInteraction(interactionId)?.label ?? '',
+        trialChoice?.label ?? '',
         selectedLocation?.risk ?? ACTIONS[type].risk,
         plannedCycles > 1 ? `连续 ${plannedCycles} 轮` : '',
       ].filter(Boolean),

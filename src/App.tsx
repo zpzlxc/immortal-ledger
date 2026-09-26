@@ -22,6 +22,7 @@ import {
 } from './game/cave';
 import { CAVE_MASTERY_DEFINITIONS } from './game/caveActions';
 import { CAVE_RESEARCH_DEFINITIONS } from './game/caveResearch';
+import { FOUNDATION_TRIALS, getFoundationTrialApproachError, getFoundationTrialIndex, type FoundationTrialApproachId } from './game/foundationTrials';
 import { assetUrl } from './game/assets';
 import { EXPLORATION_EVENTS, EXPLORATION_LOCATIONS, getExplorationEvent, getWorldCycle } from './game/exploration';
 import { getInjuryLabel, getInjurySourceLabel } from './game/injury';
@@ -92,15 +93,20 @@ import {
 } from './game/save';
 import {
   clearCloudSession,
+  clearCloudShareSession,
   CloudSaveError,
+  createCloudShareRoom,
   fetchCloudSave,
   getCloudSession,
+  getCloudShareSession,
+  hasCloudAccess,
   isCloudSaveConfigured,
   loginCloudAccount,
   logoutCloudAccount,
   registerCloudAccount,
   uploadCloudSave,
   type CloudSaveRecord,
+  type CloudShareSession,
   type CloudSession,
 } from './cloudSave';
 import {
@@ -185,15 +191,16 @@ const App = () => {
   const [offlineSummary, setOfflineSummary] = useState<OfflineSummary | null>(() => initialSession.offlineSummary);
   const [now, setNow] = useState(Date.now());
   const [notice, setNotice] = useState<LedgerEntry[]>([]);
-  const [activeTab, setActiveTab] = useState<'ledger' | 'cultivation' | 'technique' | 'exploration' | 'people' | 'cave' | 'codex'>('ledger');
+  const [activeTab, setActiveTab] = useState<'ledger' | 'cultivation' | 'technique' | 'realm' | 'exploration' | 'people' | 'sect' | 'cave' | 'codex'>('ledger');
   const [selectedExplorationLocationId, setSelectedExplorationLocationId] = useState<ExplorationLocationId>('qingstone-mountain');
   const [errorMessage, setErrorMessage] = useState('');
   const [practicePlanMinutes, setPracticePlanMinutes] = useState(loadPracticePlanMinutes);
   const importInput = useRef<HTMLInputElement>(null);
   const [cloudSession, setCloudSession] = useState<CloudSession | null>(() => getCloudSession());
+  const [cloudShareSession, setCloudShareSession] = useState<CloudShareSession | null>(() => getCloudShareSession());
   const [cloudStatus, setCloudStatus] = useState(() => {
     if (!isCloudSaveConfigured()) return '本地模式';
-    return getCloudSession() ? '同步准备中' : '未登录';
+    return hasCloudAccess() ? '同步准备中' : '未登录';
   });
   const [cloudAuthMode, setCloudAuthMode] = useState<CloudAuthMode | null>(null);
   const [cloudAuthUsername, setCloudAuthUsername] = useState('');
@@ -220,7 +227,7 @@ const App = () => {
   };
 
   const synchronizeCloudSession = async () => {
-    if (!isCloudSaveConfigured() || !getCloudSession()) return;
+    if (!isCloudSaveConfigured() || !hasCloudAccess()) return;
     setCloudStatus('同步中');
     const remote = await fetchCloudSave();
     if (remote) {
@@ -241,11 +248,11 @@ const App = () => {
   const saveGame = (state: GameState) => {
     latestGameRef.current = state;
     saveLocalGame(state);
-    if (!isCloudSaveConfigured() || !getCloudSession() || cloudRevisionRef.current === null) return;
+    if (!isCloudSaveConfigured() || !hasCloudAccess() || cloudRevisionRef.current === null) return;
 
     cloudSyncQueueRef.current = cloudSyncQueueRef.current.then(async () => {
       const expectedRevision = cloudRevisionRef.current;
-      if (expectedRevision === null || !getCloudSession()) return;
+      if (expectedRevision === null || !hasCloudAccess()) return;
       try {
         setCloudStatus('同步中');
         const uploaded = await uploadCloudSave(state, expectedRevision);
@@ -260,7 +267,9 @@ const App = () => {
         }
         if (error instanceof CloudSaveError && error.status === 401) {
           clearCloudSession();
+          clearCloudShareSession();
           setCloudSession(null);
+          setCloudShareSession(null);
           setCloudStatus('未登录');
         } else {
           setCloudStatus('同步失败');
@@ -304,6 +313,7 @@ const App = () => {
         ? await loginCloudAccount(username, cloudAuthPassword)
         : await registerCloudAccount(username, cloudAuthPassword);
       setCloudSession(session);
+      setCloudShareSession(null);
       cloudRevisionRef.current = null;
       setCloudAuthMode(null);
       setCloudAuthPassword('');
@@ -315,10 +325,36 @@ const App = () => {
         setErrorMessage(`已登录，存档同步未完成：${error instanceof Error ? error.message : '请稍后重试'}`);
       }
     } catch (error) {
-      setCloudStatus(getCloudSession() ? '同步失败' : '未登录');
+      setCloudStatus(hasCloudAccess() ? '同步失败' : '未登录');
       setCloudAuthError(error instanceof Error ? error.message : '云存档登录失败');
     } finally {
       setCloudAuthSubmitting(false);
+    }
+  };
+
+  const handleCloudShareCreate = async () => {
+    if (!isCloudSaveConfigured()) return;
+    setCloudStatus('创建专属链接中');
+    setErrorMessage('');
+    try {
+      const session = await createCloudShareRoom();
+      setCloudSession(null);
+      setCloudShareSession(session);
+      cloudRevisionRef.current = null;
+      await synchronizeCloudSession();
+    } catch (error) {
+      setCloudStatus(hasCloudAccess() ? '同步失败' : '未登录');
+      setErrorMessage(error instanceof Error ? error.message : '专属云存档创建失败');
+    }
+  };
+
+  const handleCloudShareCopy = async () => {
+    if (!cloudShareSession) return;
+    try {
+      await navigator.clipboard.writeText(cloudShareSession.link);
+      setErrorMessage('专属链接已复制，打开它即可在其他设备继续修行。');
+    } catch {
+      setErrorMessage(`请手动复制专属链接：${cloudShareSession.link}`);
     }
   };
 
@@ -330,8 +366,10 @@ const App = () => {
     } catch (error) {
       if (error instanceof CloudSaveError && error.status === 401) {
         clearCloudSession();
+        clearCloudShareSession();
         cloudRevisionRef.current = null;
         setCloudSession(null);
+        setCloudShareSession(null);
         setCloudStatus('未登录');
       } else {
         setCloudStatus('同步失败');
@@ -342,12 +380,14 @@ const App = () => {
 
   const handleCloudLogout = async () => {
     try {
-      await logoutCloudAccount();
+      if (cloudSession) await logoutCloudAccount();
     } catch {
       // 本地会话仍然会在 logoutCloudAccount 的 finally 中清除。
     }
+    clearCloudShareSession();
     cloudRevisionRef.current = null;
     setCloudSession(null);
+    setCloudShareSession(null);
     setCloudStatus(isCloudSaveConfigured() ? '未登录' : '本地模式');
   };
 
@@ -356,13 +396,15 @@ const App = () => {
   }, [game]);
 
   useEffect(() => {
-    if (!isCloudSaveConfigured() || !getCloudSession()) return undefined;
+    if (!isCloudSaveConfigured() || !hasCloudAccess()) return undefined;
     let active = true;
     void synchronizeCloudSession().catch((error) => {
       if (!active) return;
       if (error instanceof CloudSaveError && error.status === 401) {
         clearCloudSession();
+        clearCloudShareSession();
         setCloudSession(null);
+        setCloudShareSession(null);
         setCloudStatus('未登录');
       } else {
         setCloudStatus('同步失败');
@@ -480,6 +522,20 @@ const App = () => {
     );
     saveGame(next);
     setGame(next);
+    if (settled.newEntries.length > 0) setNotice(settled.newEntries);
+  };
+
+  const handleFoundationTrial = (approach: FoundationTrialApproachId) => {
+    if (!game) return;
+    const settledAt = Date.now();
+    const settled = settleGame(game, settledAt);
+    captureOfflineSummary(game, settled.state, settledAt);
+    const error = getActionStartError(settled.state, 'foundation_trial', 'qingstone-mountain', undefined, settledAt, undefined, undefined, undefined, approach);
+    if (error) { setErrorMessage(error); return; }
+    const next = startAction(settled.state, 'foundation_trial', settledAt, 'qingstone-mountain', undefined, Math.random, 0, undefined, undefined, undefined, approach);
+    saveGame(next);
+    setGame(next);
+    setErrorMessage('');
     if (settled.newEntries.length > 0) setNotice(settled.newEntries);
   };
 
@@ -746,7 +802,7 @@ const App = () => {
     if (!file) return;
     try {
       const imported = await parseSaveFile(file);
-      if (!window.confirm(`导入「${imported.character.name}」的存档并替换当前进度？${getCloudSession() ? '登录状态下也会同步到云端。' : ''}建议先导出备份。`)) return;
+      if (!window.confirm(`导入「${imported.character.name}」的存档并替换当前进度？${hasCloudAccess() ? '登录状态下也会同步到云端。' : ''}建议先导出备份。`)) return;
       saveGame(imported);
       setGame(imported);
       setOfflineSummary(null);
@@ -767,6 +823,9 @@ const App = () => {
           cloudStatus={cloudStatus}
           onCloudAuth={handleCloudAuth}
           onCloudLogout={handleCloudLogout}
+          cloudShareSession={cloudShareSession}
+          onCloudShareCreate={() => void handleCloudShareCreate()}
+          onCloudShareCopy={() => void handleCloudShareCopy()}
           cloudError={errorMessage}
           onCloudRetry={() => void retryCloudSync()}
         />
@@ -841,8 +900,9 @@ const App = () => {
   };
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${game.character.currentAction ? 'has-current-action' : ''}`}>
       <header className="topbar">
+        <div className="topbar-main">
         <div className="brand-lockup">
           <BrandLogo />
           <div>
@@ -854,13 +914,17 @@ const App = () => {
           <span className="save-status"><span className="status-dot" />本地存档</span>
           {isCloudSaveConfigured() && (
             <>
-              <span className="cloud-save-status" title={cloudStatus}>☁ {cloudSession ? `${cloudSession.user.username} · ${cloudStatus}` : `云存档：${cloudStatus}`}</span>
-              {cloudSession ? (
-                <button className="ghost-button" onClick={() => void handleCloudLogout()}>退出云存档</button>
+              <span className="cloud-save-status" title={cloudStatus}>☁ {cloudSession ? `${cloudSession.user.username} · ${cloudStatus}` : cloudShareSession ? `专属链接 · ${cloudStatus}` : `云存档：${cloudStatus}`}</span>
+              {cloudSession || cloudShareSession ? (
+                <>
+                  {cloudShareSession && <button className="ghost-button" onClick={() => void handleCloudShareCopy()}>复制专属链接</button>}
+                  <button className="ghost-button" onClick={() => void handleCloudLogout()}>退出云存档</button>
+                </>
               ) : (
                 <>
                   <button className="ghost-button" onClick={() => void handleCloudAuth('login')}>登录云存档</button>
                   <button className="ghost-button" onClick={() => void handleCloudAuth('register')}>注册云存档</button>
+                  <button className="ghost-button" onClick={() => void handleCloudShareCreate()}>创建专属链接</button>
                 </>
               )}
             </>
@@ -885,15 +949,17 @@ const App = () => {
             }}
           />
         </div>
+        </div>
+        {game.character.currentAction && <CurrentActionHeader action={game.character.currentAction} now={now} />}
       </header>
 
       <main className="main-layout">
         <nav className="tab-bar" aria-label="修行分区">
           <TabButton icon="簿" active={activeTab === 'ledger'} onClick={() => setActiveTab('ledger')} label="长生簿" badge={unreadCount} />
-          <TabButton icon="炼" active={activeTab === 'cultivation'} onClick={() => setActiveTab('cultivation')} label="修炼" />
-          <TabButton icon="诀" active={activeTab === 'technique'} onClick={() => setActiveTab('technique')} label="功法" />
+          <TabButton icon="炼" active={activeTab === 'cultivation' || activeTab === 'technique' || activeTab === 'realm'} onClick={() => setActiveTab('cultivation')} label="修行" />
           <TabButton icon="山" active={activeTab === 'exploration'} onClick={() => setActiveTab('exploration')} label="探索" badge={game.pendingExplorationEvent ? 1 : undefined} />
           <TabButton icon="缘" active={activeTab === 'people'} onClick={() => setActiveTab('people')} label="人物" badge={game.social.pendingPersonEvent ? 1 : undefined} />
+          <TabButton icon="门" active={activeTab === 'sect'} onClick={() => setActiveTab('sect')} label="宗门" />
           <TabButton icon="府" active={activeTab === 'cave'} onClick={() => setActiveTab('cave')} label="洞府" />
           <TabButton icon="录" active={activeTab === 'codex'} onClick={() => setActiveTab('codex')} label="图鉴" />
         </nav>
@@ -969,14 +1035,20 @@ const App = () => {
             </div>
           )}
 
+          {(activeTab === 'cultivation' || activeTab === 'technique' || activeTab === 'realm') && (
+            <nav className="section-tabs paper-card" aria-label="修行内容">
+              <button className={activeTab === 'cultivation' ? 'selected' : ''} onClick={() => setActiveTab('cultivation')}>日常功课</button>
+              <button className={activeTab === 'technique' ? 'selected' : ''} onClick={() => setActiveTab('technique')}>功法研习</button>
+              <button className={activeTab === 'realm' ? 'selected' : ''} onClick={() => setActiveTab('realm')}>境界突破</button>
+            </nav>
+          )}
+
           {activeTab === 'ledger' && (
             <LedgerView
               game={game}
               entries={game.ledger}
               onRead={markRead}
               onReadAll={markAllRead}
-              action={game.character.currentAction}
-              now={now}
               offlineSummary={offlineSummary}
               nextStepSuggestion={getNextStepSuggestion(game)}
               onDismissOfflineSummary={() => setOfflineSummary(null)}
@@ -988,28 +1060,32 @@ const App = () => {
       {activeTab === 'cultivation' && (
             <CultivationView
               currentAction={game.character.currentAction}
-              now={now}
               cave={game.cave}
               sectId={game.social.sect.sectId}
               attributes={game.character.attributes}
-              realm={game.character.realm}
               injury={game.character.injury}
               cultivationPath={game.cultivationPath}
+              canBreakthrough={canBreakthrough}
+              onStart={handleStartAction}
+              practicePlanMinutes={practicePlanMinutes}
+              onPracticePlanChange={handlePracticePlanChange}
+            />
+          )}
+          {activeTab === 'realm' && (
+            <RealmView
+              game={game}
               canBreakthrough={canBreakthrough}
               breakthroughError={breakthroughError}
               goldenCoreReady={goldenCoreReady}
               goldenCoreError={goldenCoreError}
-              onStart={handleStartAction}
-              practicePlanMinutes={practicePlanMinutes}
-              onPracticePlanChange={handlePracticePlanChange}
               onBreakthrough={handleBreakthrough}
               onGoldenCoreOrdeal={handleGoldenCoreOrdeal}
+              onExplore={() => setActiveTab('exploration')}
             />
           )}
           {activeTab === 'technique' && (
             <TechniqueView
               currentAction={game.character.currentAction}
-              now={now}
               cave={game.cave}
               sectId={game.social.sect.sectId}
               inventory={game.inventory}
@@ -1026,8 +1102,8 @@ const App = () => {
           )}
           {activeTab === 'exploration' && (
             <ExplorationView
+              game={game}
               currentAction={game.character.currentAction}
-              now={now}
               cave={game.cave}
               sectId={game.social.sect.sectId}
               worldCycle={getWorldCycle(game)}
@@ -1038,6 +1114,7 @@ const App = () => {
               onLocationChange={setSelectedExplorationLocationId}
               onPracticePlanChange={handlePracticePlanChange}
               onStart={handleStartAction}
+              onStartTrial={handleFoundationTrial}
               onResolveEvent={handleResolveExplorationEvent}
             />
           )}
@@ -1048,7 +1125,6 @@ const App = () => {
               sectId={game.social.sect.sectId}
               injury={game.character.injury}
               currentAction={game.character.currentAction}
-              now={now}
               offlineLimitMinutes={getOfflineLimitMinutes(game)}
               onCollect={handleCollectCave}
               onTreat={handleTreatInjury}
@@ -1060,6 +1136,23 @@ const App = () => {
           )}
           {activeTab === 'people' && (
             <PeopleView
+              section="people"
+              social={game.social}
+              spiritStones={game.inventory.spiritStones}
+              now={now}
+              currentAction={game.character.currentAction}
+              onResolveEvent={handleResolvePersonEvent}
+              onStartInteraction={handleStartPersonInteraction}
+              onJoinSect={handleJoinSect}
+              onStartMission={handleStartSectMission}
+              onExchangeReputation={handleExchangeReputation}
+              onPromotePosition={handlePromoteSectPosition}
+              onDefectSect={handleDefectSect}
+            />
+          )}
+          {activeTab === 'sect' && (
+            <PeopleView
+              section="sect"
               social={game.social}
               spiritStones={game.inventory.spiritStones}
               now={now}
@@ -1197,6 +1290,9 @@ const CreateCharacter = ({
   cloudStatus,
   onCloudAuth,
   onCloudLogout,
+  cloudShareSession,
+  onCloudShareCreate,
+  onCloudShareCopy,
   cloudError,
   onCloudRetry,
 }: {
@@ -1206,6 +1302,9 @@ const CreateCharacter = ({
   cloudStatus: string;
   onCloudAuth: (mode: 'login' | 'register') => void;
   onCloudLogout: () => Promise<void>;
+  cloudShareSession: CloudShareSession | null;
+  onCloudShareCreate: () => void;
+  onCloudShareCopy: () => void;
   cloudError: string;
   onCloudRetry: () => void;
 }) => {
@@ -1255,15 +1354,19 @@ const CreateCharacter = ({
         {cloudEnabled && (
           <div className="cloud-auth-panel">
             <div>
-              <strong>跨设备云存档</strong>
-              <small>{cloudSession ? `${cloudSession.user.username} · ${cloudStatus}` : '登录后可在其他设备继续这一世'}</small>
+              <strong>{cloudShareSession ? '专属链接云存档' : '跨设备云存档'}</strong>
+              <small>{cloudSession ? `${cloudSession.user.username} · ${cloudStatus}` : cloudShareSession ? `已启用 · ${cloudStatus}` : '无需注册，创建专属链接即可跨设备继续'}</small>
             </div>
-            {cloudSession ? (
-              <button className="text-button" onClick={() => void onCloudLogout()}>退出</button>
+            {cloudSession || cloudShareSession ? (
+              <div className="cloud-auth-actions">
+                {cloudShareSession && <button className="text-button" onClick={onCloudShareCopy}>复制链接</button>}
+                <button className="text-button" onClick={() => void onCloudLogout()}>退出</button>
+              </div>
             ) : (
               <div className="cloud-auth-actions">
                 <button className="text-button" onClick={() => onCloudAuth('login')}>登录</button>
                 <button className="text-button" onClick={() => onCloudAuth('register')}>注册</button>
+                <button className="text-button" onClick={onCloudShareCreate}>创建专属链接</button>
               </div>
             )}
           </div>
@@ -1466,13 +1569,30 @@ const JourneyGuide = ({ game, onNavigate }: { game: GameState; onNavigate: (tab:
   </section>;
 };
 
-const LedgerView = ({ game, entries, onRead, onReadAll, action, now, offlineSummary, nextStepSuggestion, onDismissOfflineSummary, pendingEvent, onOpenPendingEvent, onNavigate }: {
+const CloudbreakStoryCard = ({ game, onExplore }: { game: GameState; onExplore: () => void }) => {
+  if (!game.discoveredLocations.includes('cloudbreak-ridge')) return null;
+  const chapters = [
+    { id: 'cloudbreak-stone-gate', title: '山门', hint: '先读山门上的旧痕' },
+    { id: 'cloudbreak-missing-page', title: '缺页', hint: '再访云岫古道，寻找山门后的缺页' },
+    { id: 'cloudbreak-ink-river', title: '墨河', hint: '循着纸上的线索，寻找云中墨河' },
+    { id: 'cloudbreak-last-margin', title: '续写', hint: '渡河后，看看空白处等待着什么' },
+  ] as const;
+  const completed = chapters.filter((chapter) => game.completedExplorationEventIds.includes(chapter.id)).length;
+  const next = chapters.find((chapter) => !game.completedExplorationEventIds.includes(chapter.id));
+  return <section className="cloudbreak-story paper-card" aria-label="云上篇章进度">
+    <div className="cloudbreak-story-head"><div><span className="eyebrow">CLOUDBREAK CHRONICLE · 云上篇章</span><h3>{next ? '长生簿还有一页未干' : '云上篇章，已写入簿中'}</h3></div><span>{completed} / {chapters.length}</span></div>
+    <div className="cloudbreak-chapters" aria-label={`已完成 ${completed} 章，共 ${chapters.length} 章`}>
+      {chapters.map((chapter, index) => <div className={`cloudbreak-chapter ${game.completedExplorationEventIds.includes(chapter.id) ? 'complete' : next?.id === chapter.id ? 'current' : ''}`} key={chapter.id}><span>{String(index + 1).padStart(2, '0')}</span><strong>{chapter.title}</strong></div>)}
+    </div>
+    <div className="cloudbreak-story-foot"><p>{next ? next.hint : '此后每次登上云岫古道，仍可能遇见铜铃与旧名的回响。'}</p>{next && <button className="text-button" onClick={onExplore}>前往探索 ↗</button>}</div>
+  </section>;
+};
+
+const LedgerView = ({ game, entries, onRead, onReadAll, offlineSummary, nextStepSuggestion, onDismissOfflineSummary, pendingEvent, onOpenPendingEvent, onNavigate }: {
   game: GameState;
   entries: LedgerEntry[];
   onRead: (entryId: string) => void;
   onReadAll: () => void;
-  action: GameState['character']['currentAction'];
-  now: number;
   offlineSummary: OfflineSummary | null;
   nextStepSuggestion: string;
   onDismissOfflineSummary: () => void;
@@ -1490,8 +1610,8 @@ const LedgerView = ({ game, entries, onRead, onReadAll, action, now, offlineSumm
       <div className="hero-ornament">☽</div>
     </section>
     <JourneyGuide game={game} onNavigate={onNavigate} />
-    {action && <CurrentActionCard action={action} now={now} />}
     <JourneyMap game={game} />
+    <CloudbreakStoryCard game={game} onExplore={() => onNavigate('exploration')} />
     {offlineSummary && (
       <OfflineSummaryCard
         summary={offlineSummary}
@@ -1579,10 +1699,8 @@ const OfflineSummaryCard = ({ summary, nextStepSuggestion, onDismiss }: {
   );
 };
 
-const CurrentActionCard = ({ action, now }: { action: GameState['character']['currentAction']; now: number }) => {
-  if (!action) {
-    return <div className="empty-action"><span className="empty-action-icon">◌</span><div><strong>暂无安排中的修行</strong><span>去“修炼”页选择下一步行动，或让长生簿安静地等你回来。</span></div></div>;
-  }
+const CurrentActionHeader = ({ action, now }: { action: GameState['character']['currentAction']; now: number }) => {
+  if (!action) return null;
   const definition = ACTIONS[action.type];
   const explorationLocation = action.type === 'explore'
     ? EXPLORATION_LOCATIONS[action.locationId ?? 'qingstone-mountain']
@@ -1600,18 +1718,20 @@ const CurrentActionCard = ({ action, now }: { action: GameState['character']['cu
     ? RELATIONSHIPS[action.relationshipId]
     : null;
   const total = action.endsAt - action.startedAt;
-  const progress = Math.min(100, Math.max(0, ((now - action.startedAt) / total) * 100));
+  const progress = total > 0 ? Math.min(100, Math.max(0, ((now - action.startedAt) / total) * 100)) : 100;
   const plannedCycles = action.plannedCycles ?? 1;
   const completedCycles = action.completedCycles ?? 0;
+  const title = explorationLocation ? `探索 · ${explorationLocation.label}` : sectMission ? `${definition.label} · ${sectMission.title}` : caveResearch ? `${definition.label} · ${caveResearch.label}` : personInteraction && interactionPerson ? `${personInteraction.label} · ${interactionPerson.name}` : definition.label;
+  const description = plannedCycles > 1 ? `已结算 ${completedCycles} / ${plannedCycles} 轮 · 触及关隘或伤势过重会提前出关` : explorationLocation ? explorationLocation.summary : sectMission ? sectMission.summary : caveResearch ? caveResearch.summary : personInteraction ? personInteraction.summary : definition.description;
   return (
-    <div className="current-action-card">
-      <div className="action-icon large">{definition.icon}</div>
-      <div className="action-card-main">
-        <div className="action-card-top"><span className="eyebrow">CURRENT ACTION · 当前行动</span><strong>{formatRemaining(action.endsAt, now)}</strong></div>
-        <h3>{explorationLocation ? `${definition.label} · ${explorationLocation.label}` : sectMission ? `${definition.label} · ${sectMission.title}` : caveResearch ? `${definition.label} · ${caveResearch.label}` : personInteraction && interactionPerson ? `${personInteraction.label} · ${interactionPerson.name}` : definition.label}{plannedCycles > 1 ? ` · 连续 ${plannedCycles} 轮` : ''}</h3>
-        <p>{plannedCycles > 1 ? `已经结算 ${completedCycles} / ${plannedCycles} 轮。触及突破关隘或伤势过重时会自动提前出关。` : explorationLocation ? explorationLocation.summary : sectMission ? sectMission.summary : caveResearch ? caveResearch.summary : personInteraction ? personInteraction.summary : definition.description}</p>
-        <div className="progress-track action-progress"><div style={{ width: `${progress}%` }} /></div>
+    <div className="header-action-status" aria-label="当前行动">
+      <div className="action-icon" aria-hidden="true">{explorationLocation?.icon ?? definition.icon}</div>
+      <div className="header-action-main">
+        <div className="header-action-line"><span className="header-action-kicker">进行中</span><strong>{title}{plannedCycles > 1 ? ` · 连续 ${plannedCycles} 轮` : ''}</strong></div>
+        <div className="header-action-description" title={description}>{description}</div>
+        <div className="progress-track action-progress" role="progressbar" aria-label={`${title}进度`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress)}><div style={{ width: `${progress}%` }} /></div>
       </div>
+      <div className="header-action-remaining"><span>剩余时间</span><strong>{formatRemaining(action.endsAt, now)}</strong></div>
     </div>
   );
 };
@@ -1719,8 +1839,6 @@ const CultivationPulse = ({ attributes, injury, cultivationPath, currentAction, 
   const technique = getActiveTechnique(cultivationPath);
   const advice = injury
     ? { title: injury.severity >= 3 ? '先疗伤，再谈险招' : '伤势正在恢复', body: `当前伤势还需调养 ${injury.recoveryPoints} 点。平稳吐纳、静观参悟和淬体都能帮助恢复，极限运功会让伤势继续恶化。` }
-    : currentAction
-    ? { title: `专心完成「${ACTIONS[currentAction.type].label}」`, body: '一次只做一件事。等这段功课结束，长生簿会把真正的变化记下来。' }
     : canBreakthrough
       ? { title: '关隘已在眼前', body: '修为已经触及瓶颈，可以先用淬体或参悟稳住状态，再决定是否叩关。' }
       : mentalState < 40
@@ -1750,29 +1868,22 @@ const CultivationPulse = ({ attributes, injury, cultivationPath, currentAction, 
         <div className="pulse-metric"><div className="pulse-metric-top"><span>神识</span><strong>{attributes.spiritSense}</strong></div><small>感知危险与细微灵机</small></div>
         <div className="pulse-metric"><div className="pulse-metric-top"><span>当前功法</span><strong>{technique ? technique.name : '未择'}</strong></div><small>{technique ? '参悟与研读会继续积累熟练度' : '去功法页选择一条修行道路'}</small></div>
       </div>
-      <div className="cultivation-advice"><span>修炼建议</span><div><strong>{advice.title}</strong><p>{advice.body}</p></div></div>
+      {!currentAction && <div className="cultivation-advice"><span>修炼建议</span><div><strong>{advice.title}</strong><p>{advice.body}</p></div></div>}
     </section>
   );
 };
 
-const CultivationView = ({ currentAction, now, cave, sectId, attributes, realm, injury, cultivationPath, canBreakthrough, breakthroughError, goldenCoreReady, goldenCoreError, practicePlanMinutes, onPracticePlanChange, onStart, onBreakthrough, onGoldenCoreOrdeal }: {
+const CultivationView = ({ currentAction, cave, sectId, attributes, injury, cultivationPath, canBreakthrough, practicePlanMinutes, onPracticePlanChange, onStart }: {
   currentAction: GameState['character']['currentAction'];
-  now: number;
   cave: GameState['cave'];
   sectId: SectId | null;
   attributes: GameState['character']['attributes'];
-  realm: GameState['character']['realm'];
   injury: GameState['character']['injury'];
   cultivationPath: GameState['cultivationPath'];
   canBreakthrough: boolean;
-  breakthroughError: string | null;
-  goldenCoreReady: boolean;
-  goldenCoreError: string | null;
   practicePlanMinutes: number;
   onPracticePlanChange: (minutes: number) => void;
   onStart: (type: ActionType, locationId?: ExplorationLocationId, plannedMinutes?: number) => void;
-  onBreakthrough: () => void;
-  onGoldenCoreOrdeal: () => void;
 }) => (
   <div className="view-stack">
     <section className="page-heading">
@@ -1780,37 +1891,7 @@ const CultivationView = ({ currentAction, now, cave, sectId, attributes, realm, 
       <div className="heading-stamp">静心</div>
     </section>
     <CultivationPulse attributes={attributes} injury={injury} cultivationPath={cultivationPath} currentAction={currentAction} canBreakthrough={canBreakthrough} />
-    {currentAction && <CurrentActionCard action={currentAction} now={now} />}
     <PracticePlanSelector value={practicePlanMinutes} disabled={Boolean(currentAction)} onChange={onPracticePlanChange} />
-    {canBreakthrough && !goldenCoreReady && (
-      <section className="breakthrough-card">
-        <div><span className="eyebrow">A GATE AWAITS · 关隘已至</span><h3>你的修为已经触及当前瓶颈。</h3><p>准备突破需耗时 {ACTIONS.breakthrough.durationMinutes} 分钟，消耗 {BREAKTHROUGH_COST_SPIRIT_STONES} 枚灵石。{breakthroughError ?? '准备完成后才会真正叩击关隘，失败会进入冷却。'}</p></div>
-        <button className="primary-button" disabled={Boolean(breakthroughError)} onClick={onBreakthrough}>{breakthroughError ? '暂不可突破' : '开始准备突破'}</button>
-      </section>
-    )}
-    {goldenCoreReady && (
-      <section className="golden-core-card paper-card">
-        <div>
-          <span className="eyebrow">THE LAST QUESTION · 金丹终问</span>
-          <h3>筑基圆满，这一世已经可以写下结局。</h3>
-          <p>完成三次筑基试炼并备齐灵石 {GOLDEN_CORE_ORDEAL_COST.spiritStones}、灵草 {GOLDEN_CORE_ORDEAL_COST.herbs}、功法残页 {GOLDEN_CORE_ORDEAL_COST.techniqueFragments}，即可用功法、宗门与因果凝成属于本世的金丹结局。行动完成后本世将结束。</p>
-          {goldenCoreError && <small>{goldenCoreError}</small>}
-        </div>
-        <button className="primary-button" disabled={Boolean(goldenCoreError) || Boolean(currentAction)} onClick={onGoldenCoreOrdeal}>
-          {currentAction ? '行动中' : goldenCoreError ? '尚未具足' : '叩问金丹 · 60 分钟'}
-        </button>
-      </section>
-    )}
-    {realm.major === 'foundation_establishment' && (
-      <section className="foundation-trial-section paper-card">
-        <div className="section-intro">
-          <div><span className="eyebrow">BEYOND THE QI REFINING PATH · 筑基新途</span><h3>云外峰场</h3></div>
-          <span>筑基后开放</span>
-        </div>
-        <p className="foundation-trial-copy">旧日的山河已经不够容纳你的脚步。去筑基修士才能踏入的试炼场，寻找更高阶的功法残页与灵石。</p>
-        <ActionOption type="foundation_trial" currentAction={currentAction} injury={injury} cave={cave} sectId={sectId} onStart={onStart} />
-      </section>
-    )}
     <section className="action-section">
       <div className="section-intro">
         <div><span className="eyebrow">CHOOSE YOUR PRACTICE · 选择今日功课</span><h3>今天怎么修炼</h3></div>
@@ -1823,13 +1904,42 @@ const CultivationView = ({ currentAction, now, cave, sectId, attributes, realm, 
         <ActionOption type="overdrive" currentAction={currentAction} injury={injury} cave={cave} sectId={sectId} plannedMinutes={practicePlanMinutes} onStart={onStart} />
       </div>
     </section>
-    {currentAction && <div className="hint-note">当前行动还剩 {formatRemaining(currentAction.endsAt, now)}。你可以关闭网页，回来时查看长生簿。</div>}
   </div>
 );
 
-const TechniqueView = ({ currentAction, now, cave, sectId, inventory, realm, cultivationPath, practicePlanMinutes, onPracticePlanChange, onChooseSchool, onLearnAuxiliaryTechnique, onTechniqueSwap, onResearchBranch, onStart }: {
+const RealmView = ({ game, canBreakthrough, breakthroughError, goldenCoreReady, goldenCoreError, onBreakthrough, onGoldenCoreOrdeal, onExplore }: {
+  game: GameState;
+  canBreakthrough: boolean;
+  breakthroughError: string | null;
+  goldenCoreReady: boolean;
+  goldenCoreError: string | null;
+  onBreakthrough: () => void;
+  onGoldenCoreOrdeal: () => void;
+  onExplore: () => void;
+}) => {
+  const { character, inventory, story } = game;
+  const isFoundation = character.realm.major === 'foundation_establishment';
+  const needsCultivation = character.realm.cultivation < character.realm.cultivationRequired;
+  const checklist = [
+    { label: '筑基圆满', done: goldenCoreReady, detail: formatRealm(character.realm.major, character.realm.stage) },
+    { label: '修为充足', done: !needsCultivation, detail: `${character.realm.cultivation} / ${character.realm.cultivationRequired}` },
+    { label: '三关试炼', done: story.foundationTrialCount >= 3, detail: `${Math.min(3, story.foundationTrialCount)} / 3` },
+    { label: '灵石', done: inventory.spiritStones >= GOLDEN_CORE_ORDEAL_COST.spiritStones, detail: `${inventory.spiritStones} / ${GOLDEN_CORE_ORDEAL_COST.spiritStones}` },
+    { label: '灵草', done: inventory.herbs >= GOLDEN_CORE_ORDEAL_COST.herbs, detail: `${inventory.herbs} / ${GOLDEN_CORE_ORDEAL_COST.herbs}` },
+    { label: '功法残页', done: inventory.techniqueFragments >= GOLDEN_CORE_ORDEAL_COST.techniqueFragments, detail: `${inventory.techniqueFragments} / ${GOLDEN_CORE_ORDEAL_COST.techniqueFragments}` },
+    { label: '伤势可承受', done: !character.injury || character.injury.severity < 3, detail: character.injury ? getInjuryLabel(character.injury) : '无伤' },
+  ];
+  return <div className="view-stack">
+    <section className="page-heading"><div><div className="eyebrow">REALM AND ASCENT · 境界</div><h2>境界突破</h2><p>在这里查看关隘、准备突破，以及这一世的金丹之问。</p></div><div className="heading-stamp">{formatRealm(character.realm.major, character.realm.stage)}</div></section>
+    <section className="realm-progress paper-card"><div className="section-intro"><div><span className="eyebrow">CURRENT GATE · 当前关隘</span><h3>{formatRealm(character.realm.major, character.realm.stage)}</h3></div><strong>{character.realm.cultivation} / {character.realm.cultivationRequired}</strong></div><div className="progress-track"><div style={{ width: `${Math.min(100, 100 * character.realm.cultivation / character.realm.cultivationRequired)}%` }} /></div><p>{canBreakthrough && !goldenCoreReady ? '修为已满，可以准备突破。' : goldenCoreReady ? '道基已圆满。接下来的目标是叩问金丹。' : `还差 ${character.realm.cultivationRequired - character.realm.cultivation} 点修为触及关隘。`}</p></section>
+    {canBreakthrough && !goldenCoreReady && <section className="breakthrough-card"><div><span className="eyebrow">A GATE AWAITS · 关隘已至</span><h3>准备突破</h3><p>耗时 {ACTIONS.breakthrough.durationMinutes} 分钟，消耗 {BREAKTHROUGH_COST_SPIRIT_STONES} 枚灵石。{breakthroughError ?? '准备完成后叩击关隘，失败会进入冷却。'}</p></div><button className="primary-button" disabled={Boolean(breakthroughError)} onClick={onBreakthrough}>{breakthroughError ? '暂不可突破' : '开始准备突破'}</button></section>}
+    {isFoundation && <section className="realm-checklist paper-card"><div className="section-intro"><div><span className="eyebrow">GOLDEN CORE PATH · 本世目标</span><h3>金丹准备</h3></div><strong>{checklist.filter((item) => item.done).length} / {checklist.length}</strong></div><p>叩问金丹是本世终章。完成行动后将结算这一世，并开启轮回；当前版本不会进入可游玩的金丹境。</p><div className="realm-checklist-grid">{checklist.map((item) => <div className={item.done ? 'done' : ''} key={item.label}><span>{item.done ? '✓' : '○'} {item.label}</span><strong>{item.detail}</strong></div>)}</div>{story.foundationTrialCount < 3 && <button className="secondary-button" onClick={onExplore}>前往探索 · 完成试炼</button>}</section>}
+    {goldenCoreReady && <section className="golden-core-card paper-card"><div><span className="eyebrow">THE LAST QUESTION · 金丹终问</span><h3>叩问金丹，写下本世结局</h3><p>需要灵石 {GOLDEN_CORE_ORDEAL_COST.spiritStones}、灵草 {GOLDEN_CORE_ORDEAL_COST.herbs}、功法残页 {GOLDEN_CORE_ORDEAL_COST.techniqueFragments}。行动完成后本世结束。</p>{goldenCoreError && <small>{goldenCoreError}</small>}</div><button className="primary-button" disabled={Boolean(goldenCoreError) || Boolean(character.currentAction)} onClick={onGoldenCoreOrdeal}>{character.currentAction ? '行动中' : goldenCoreError ? '尚未具足' : '叩问金丹 · 60 分钟'}</button></section>}
+  </div>;
+};
+
+const TechniqueView = ({ currentAction, cave, sectId, inventory, realm, cultivationPath, practicePlanMinutes, onPracticePlanChange, onChooseSchool, onLearnAuxiliaryTechnique, onTechniqueSwap, onResearchBranch, onStart }: {
   currentAction: GameState['character']['currentAction'];
-  now: number;
   cave: GameState['cave'];
   sectId: SectId | null;
   inventory: GameState['inventory'];
@@ -1848,7 +1958,6 @@ const TechniqueView = ({ currentAction, now, cave, sectId, inventory, realm, cul
       <div><div className="eyebrow">THE WAY WITHIN · 内在功法</div><h2>功法</h2><p>选择一条道路，研读残卷，把一门功法走深。</p></div>
       <div className="heading-resource"><span>功法残页</span><strong>{inventory.techniqueFragments}</strong></div>
     </section>
-    {currentAction && <CurrentActionCard action={currentAction} now={now} />}
     <PracticePlanSelector value={practicePlanMinutes} disabled={Boolean(currentAction)} onChange={onPracticePlanChange} />
     <TechniquePathPanel
       cultivationPath={cultivationPath}
@@ -1867,13 +1976,12 @@ const TechniqueView = ({ currentAction, now, cave, sectId, inventory, realm, cul
       </div>
       <ActionOption type="study" currentAction={currentAction} cave={cave} sectId={sectId} plannedMinutes={practicePlanMinutes} onStart={onStart} />
     </section>
-    {currentAction && <div className="hint-note">当前行动还剩 {formatRemaining(currentAction.endsAt, now)}。你可以关闭网页，回来时查看长生簿。</div>}
   </div>
 );
 
-const ExplorationView = ({ currentAction, now, cave, sectId, worldCycle, discoveredLocations, pendingEvent, selectedLocationId, practicePlanMinutes, onLocationChange, onPracticePlanChange, onStart, onResolveEvent }: {
+const ExplorationView = ({ game, currentAction, cave, sectId, worldCycle, discoveredLocations, pendingEvent, selectedLocationId, practicePlanMinutes, onLocationChange, onPracticePlanChange, onStart, onStartTrial, onResolveEvent }: {
+  game: GameState;
   currentAction: GameState['character']['currentAction'];
-  now: number;
   cave: GameState['cave'];
   sectId: SectId | null;
   worldCycle: ReturnType<typeof getWorldCycle>;
@@ -1884,6 +1992,7 @@ const ExplorationView = ({ currentAction, now, cave, sectId, worldCycle, discove
   onLocationChange: (locationId: ExplorationLocationId) => void;
   onPracticePlanChange: (minutes: number) => void;
   onStart: (type: ActionType, locationId?: ExplorationLocationId, plannedMinutes?: number) => void;
+  onStartTrial: (approach: FoundationTrialApproachId) => void;
   onResolveEvent: (choiceId: string) => void;
 }) => (
   <div className="view-stack">
@@ -1914,7 +2023,18 @@ const ExplorationView = ({ currentAction, now, cave, sectId, worldCycle, discove
         </div>
       </section>
     )}
-    {currentAction && <CurrentActionCard action={currentAction} now={now} />}
+    {game.character.realm.major === 'foundation_establishment' && (
+      <section className="foundation-trial-section paper-card">
+        <div className="section-intro"><div><span className="eyebrow">FOUNDATION TRIAL · 筑基试炼</span><h3>{game.story.foundationTrialCount >= 3 ? '三关已过 · 重访云门' : FOUNDATION_TRIALS[getFoundationTrialIndex(game)].title}</h3></div><strong>{Math.min(3, game.story.foundationTrialCount)} / 3</strong></div>
+        <p className="foundation-trial-copy">{FOUNDATION_TRIALS[getFoundationTrialIndex(game)].summary}</p>
+        {game.story.foundationTrialCount >= 3 && <p className="foundation-trial-copy">云岫古道已经解锁。重访试炼场仍可获取资源，但不会重复解锁地点。</p>}
+        {game.story.foundationTrialCount < 3 ? <div className="trial-choice-grid">{(['steady', 'bold'] as const).map((approach) => {
+          const choice = FOUNDATION_TRIALS[getFoundationTrialIndex(game)][approach];
+          const error = getFoundationTrialApproachError(game, approach);
+          return <button className="trial-choice" key={approach} disabled={Boolean(currentAction) || Boolean(error) || Boolean(pendingEvent) || Boolean(game.social.pendingPersonEvent)} onClick={() => onStartTrial(approach)}><strong>{choice.label}</strong><span>{choice.detail}</span><small>{error ?? `预计 ${ACTIONS.foundation_trial.durationMinutes} 分钟`}</small></button>;
+        })}</div> : <ActionOption type="foundation_trial" currentAction={currentAction} cave={cave} sectId={sectId} onStart={onStart} />}
+      </section>
+    )}
     <section className="exploration-workbench">
       <ExplorationPicker
         discoveredLocations={discoveredLocations}
@@ -1938,7 +2058,6 @@ const ExplorationView = ({ currentAction, now, cave, sectId, worldCycle, discove
         <ActionOption type="explore" currentAction={currentAction} cave={cave} sectId={sectId} selectedLocationId={selectedLocationId} plannedMinutes={practicePlanMinutes} onStart={onStart} />
       </section>
     </section>
-    {currentAction && <div className="hint-note">当前行动还剩 {formatRemaining(currentAction.endsAt, now)}。你可以关闭网页，回来时查看长生簿。</div>}
   </div>
 );
 
@@ -2120,7 +2239,8 @@ const formatSectEffects = (effects: ReturnType<typeof getSectEffects>) => {
   return labels.join(' · ');
 };
 
-const PeopleView = ({ social, spiritStones, now, currentAction, onResolveEvent, onStartInteraction, onJoinSect, onStartMission, onExchangeReputation, onPromotePosition, onDefectSect }: {
+const PeopleView = ({ section, social, spiritStones, now, currentAction, onResolveEvent, onStartInteraction, onJoinSect, onStartMission, onExchangeReputation, onPromotePosition, onDefectSect }: {
+  section: 'people' | 'sect';
   social: GameState['social'];
   spiritStones: number;
   now: number;
@@ -2134,6 +2254,14 @@ const PeopleView = ({ social, spiritStones, now, currentAction, onResolveEvent, 
   onDefectSect: () => void;
 }) => {
   const pendingEvent = social.pendingPersonEvent ? getPersonEvent(social.pendingPersonEvent.eventId) : null;
+  const linQiuStoryHint = social.completedPersonEventIds.includes('lin-qiu-ledger')
+    && !social.completedPersonEventIds.includes('lin-qiu-seventh-page')
+      ? '林秋的旧账又出现了变化。探索黑风谷，看看第七页留下了什么。'
+      : social.completedPersonEventIds.includes('lin-qiu-seventh-page')
+        && !social.completedPersonEventIds.includes('lin-qiu-open-witness')
+        && !social.completedPersonEventIds.includes('lin-qiu-sealed-witness')
+          ? '第七页指向无名古井。探索古井，听听林秋与井中人各自记得什么。'
+          : null;
   const joinedSect = social.sect.sectId ? SECTS[social.sect.sectId] : null;
   const currentPosition = getSectPosition(social.sect.positionId);
   const nextPosition = getNextSectPosition(currentPosition?.id ?? 'outer-disciple');
@@ -2142,10 +2270,11 @@ const PeopleView = ({ social, spiritStones, now, currentAction, onResolveEvent, 
   return (
     <div className="view-stack">
       <section className="page-heading">
-        <div><div className="eyebrow">PEOPLE YOU MEET · 人物与宗门</div><h2>人间有约</h2><p>修仙不是把自己关进石室。你如何回应别人，也会决定别人如何记住你。</p></div>
-        <div className="heading-stamp">有缘</div>
+        <div><div className="eyebrow">{section === 'people' ? 'PEOPLE YOU MEET · 人物' : 'A PLACE TO BELONG · 宗门'}</div><h2>{section === 'people' ? '人物' : '宗门'}</h2><p>{section === 'people' ? '与故人往来，回应这一世相遇的故事。' : '查看门中职位、任务与贡献，决定自己的宗门道路。'}</p></div>
+        <div className="heading-stamp">{section === 'people' ? '有缘' : '山门'}</div>
       </section>
 
+      {section === 'people' && <>
       {pendingEvent ? (
         <section className="person-event-card paper-card">
           <div className="event-card-heading"><div><div className="eyebrow">{pendingEvent.eyebrow}</div><h3>{pendingEvent.title}</h3></div><span className="event-mark">✦</span></div>
@@ -2161,7 +2290,7 @@ const PeopleView = ({ social, spiritStones, now, currentAction, onResolveEvent, 
           </div>
         </section>
       ) : (
-        <div className="hint-note">暂时没有需要回应的人物事件。继续探索、研读，或去无名古井走一趟，新的关系会在合适的时候找上门。</div>
+        <div className="hint-note">{linQiuStoryHint ?? '暂时没有需要回应的人物事件。继续探索、研读，或去无名古井走一趟，新的关系会在合适的时候找上门。'}</div>
       )}
 
       <section className="relationship-panel paper-card">
@@ -2208,7 +2337,9 @@ const PeopleView = ({ social, spiritStones, now, currentAction, onResolveEvent, 
         </div>
       </section>
 
-      <section className="sect-panel paper-card">
+      </>}
+
+      {section === 'sect' && <section className="sect-panel paper-card">
         <div className="social-panel-heading"><div><div className="eyebrow">A PLACE TO BELONG · 宗门</div><h3>{joinedSect ? `${joinedSect.name} · ${joinedSect.motto}` : '选择你的门墙'}</h3></div><span>{joinedSect ? `贡献 ${social.sect.contribution}` : social.sect.invited ? '已有引荐' : '尚未引荐'}</span></div>
         {joinedSect ? (
           <>
@@ -2283,18 +2414,17 @@ const PeopleView = ({ social, spiritStones, now, currentAction, onResolveEvent, 
         ) : (
           <div className="sect-locked"><span className="locked-icon">门</span><div><strong>还没有宗门愿意替你担保</strong><p>完成玄松道人的人物事件，并在事件中询问宗门去处，才能看到可加入的门墙。</p></div></div>
         )}
-      </section>
+      </section>}
     </div>
   );
 };
 
-const CaveView = ({ cave, inventory, sectId, injury, currentAction, now, offlineLimitMinutes, onCollect, onTreat, onCraftPill, onUpgrade, onMastery, onStartResearch }: {
+const CaveView = ({ cave, inventory, sectId, injury, currentAction, offlineLimitMinutes, onCollect, onTreat, onCraftPill, onUpgrade, onMastery, onStartResearch }: {
   cave: GameState['cave'];
   inventory: GameState['inventory'];
   sectId: SectId | null;
   injury: GameState['character']['injury'];
   currentAction: GameState['character']['currentAction'];
-  now: number;
   offlineLimitMinutes: number;
   onCollect: () => void;
   onTreat: (treatment: 'herbs' | 'pill') => void;
@@ -2315,9 +2445,6 @@ const CaveView = ({ cave, inventory, sectId, injury, currentAction, now, offline
   const effects = getCaveEffects(cave);
   const studyDuration = getActionDurationMinutes('study', cave, undefined, sectId);
   const storedTotal = cave.stored.cultivation + cave.stored.herbs;
-  const activeResearch = currentAction?.type === 'cave_research' && currentAction.researchId
-    ? CAVE_RESEARCH_DEFINITIONS[currentAction.researchId]
-    : null;
   return (
     <div className="view-stack">
       <section className="page-heading"><div><div className="eyebrow">A PLACE TO RETURN · 归处</div><h2>洞府</h2><p>石窟初成，灵气尚浅，但已经足够成为你在尘世中的一处归处。</p></div><div className="heading-stamp built">已筑</div></section>
@@ -2418,7 +2545,6 @@ const CaveView = ({ cave, inventory, sectId, injury, currentAction, now, offline
           <span>{cave.research.completedIds.length} / {Object.keys(CAVE_RESEARCH_DEFINITIONS).length} 已完成</span>
         </div>
         <p>研究会占用一段完整行动时间，并消耗材料；完成后留下世界线索，死亡时其中的关键旁注还会变成下一世的回声。</p>
-        {activeResearch && <CurrentActionCard action={currentAction} now={now} />}
         <div className="cave-research-grid">
           {(Object.entries(CAVE_RESEARCH_DEFINITIONS) as Array<[CaveResearchId, (typeof CAVE_RESEARCH_DEFINITIONS)[CaveResearchId]]>).map(([researchId, research]) => {
             const completed = cave.research.completedIds.includes(researchId);

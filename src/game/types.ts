@@ -21,6 +21,9 @@ export type ExplorationEventId =
   | 'cloudbreak-stone-gate'
   | 'cloudbreak-red-thread'
   | 'cloudbreak-name-echo'
+  | 'cloudbreak-missing-page'
+  | 'cloudbreak-ink-river'
+  | 'cloudbreak-last-margin'
   | 'qingstone-inherited-bell'
   | 'blackwind-inherited-stele'
   | 'nameless-returning-name'
@@ -98,6 +101,9 @@ export type SectState = {
 export type PersonEventId =
   | 'lin-qiu-caravan'
   | 'lin-qiu-ledger'
+  | 'lin-qiu-seventh-page'
+  | 'lin-qiu-open-witness'
+  | 'lin-qiu-sealed-witness'
   | 'xuan-song-lesson'
   | 'xuan-song-mountain-gate'
   | 'nameless-well-soul'
@@ -170,6 +176,7 @@ export type CurrentAction = {
   researchId?: CaveResearchId;
   relationshipId?: RelationshipId;
   interactionId?: PersonInteractionId;
+  foundationTrialApproachId?: 'steady' | 'bold';
 };
 
 export type InjurySource = 'overdrive' | 'exploration' | 'sect_mission';

@@ -3,8 +3,8 @@ import { performCaveMastery } from './caveActions';
 import { getOfflineLimitMinutes } from './cave';
 import { getGoldenCoreEnding, recordLegacyProgress } from './legacy';
 import { EXPLORATION_EVENTS } from './exploration';
-import { createNewGame, startNextLife } from './save';
-import { getActionStartError, settleGame, startCaveResearch, startGoldenCoreOrdeal } from './settlement';
+import { createNewGame, parseSaveText, startNextLife } from './save';
+import { chooseCultivationSchool, getActionStartError, settleGame, startAction, startCaveResearch, startGoldenCoreOrdeal } from './settlement';
 import { TECHNIQUE_COMBINATIONS, createTechniqueProgress, TECHNIQUE_DEFINITIONS } from './techniques';
 
 const MINUTE_MS = 60_000;
@@ -29,6 +29,54 @@ const createGoldenCoreCandidate = () => {
 };
 
 describe('long-term progression', () => {
+  it('offers three distinct foundation trials with saved choices and route-specific results', () => {
+    let state = createNewGame('试云', [], undefined, [], now);
+    state.character.realm.major = 'foundation_establishment';
+    state.inventory.herbs = 2;
+    expect(getActionStartError(state, 'foundation_trial', 'qingstone-mountain', undefined, now, undefined, undefined, undefined, 'bold')).toContain('主修功法');
+
+    const first = startAction(state, 'foundation_trial', now, 'qingstone-mountain', undefined, () => 0, 0, undefined, undefined, undefined, 'steady');
+    expect(first.inventory.herbs).toBe(1);
+    expect(parseSaveText(JSON.stringify(first)).character.currentAction?.foundationTrialApproachId).toBe('steady');
+    state = settleGame(first, now + 45 * MINUTE_MS, () => 0).state;
+    expect(state.story.worldFlags).toContain('foundation-trial:1:steady');
+
+    const secondAt = now + 45 * MINUTE_MS;
+    expect(getActionStartError(state, 'foundation_trial', 'qingstone-mountain', undefined, secondAt, undefined, undefined, undefined, 'bold')).toContain('宗门');
+    state.social.sect.sectId = 'qingxiao-sword-sect';
+    const second = startAction(state, 'foundation_trial', secondAt, 'qingstone-mountain', undefined, () => 0, 0, undefined, undefined, undefined, 'bold');
+    state = settleGame(second, secondAt + 45 * MINUTE_MS, () => 0).state;
+    expect(state.social.sect.reputation).toBe(8);
+    expect(state.social.sect.contribution).toBeGreaterThanOrEqual(3);
+    expect(state.story.worldFlags).toContain('foundation-trial:2:bold');
+
+    const thirdAt = secondAt + 45 * MINUTE_MS;
+    state.story.choiceHistory.push({ kind: 'exploration', eventId: 'qingstone-red-bell', choiceId: 'climb-for-bell', chosenAt: thirdAt });
+    const fortuneBefore = state.character.attributes.fortune;
+    state = settleGame(startAction(state, 'foundation_trial', thirdAt, 'qingstone-mountain', undefined, () => 0, 0, undefined, undefined, undefined, 'steady'), thirdAt + 45 * MINUTE_MS, () => 0).state;
+    expect(state.character.attributes.fortune).toBe(fortuneBefore + 1);
+    expect(state.story.worldFlags).toContain('foundation-trial:3:steady');
+    expect(state.discoveredLocations).toContain('cloudbreak-ridge');
+  });
+
+  it('supports the alternate trial route without a sect and applies its costs', () => {
+    let state = chooseCultivationSchool(createNewGame('独行', [], undefined, [], now), 'sword', now).state;
+    state.character.realm.major = 'foundation_establishment';
+    const mentalBefore = state.character.attributes.mentalState;
+    state = settleGame(startAction(state, 'foundation_trial', now, 'qingstone-mountain', undefined, () => 0, 0, undefined, undefined, undefined, 'bold'), now + 45 * MINUTE_MS, () => 0).state;
+    expect(state.character.attributes.mentalState).toBe(mentalBefore - 2);
+
+    const secondAt = now + 45 * MINUTE_MS;
+    const fragmentsBefore = state.inventory.techniqueFragments;
+    state = settleGame(startAction(state, 'foundation_trial', secondAt, 'qingstone-mountain', undefined, () => 0, 0, undefined, undefined, undefined, 'steady'), secondAt + 45 * MINUTE_MS, () => 0).state;
+    expect(state.inventory.techniqueFragments).toBe(fragmentsBefore + 3);
+
+    const thirdAt = secondAt + 45 * MINUTE_MS;
+    const stonesBefore = state.inventory.spiritStones;
+    state = settleGame(startAction(state, 'foundation_trial', thirdAt, 'qingstone-mountain', undefined, () => 0, 0, undefined, undefined, undefined, 'bold'), thirdAt + 45 * MINUTE_MS, () => 0).state;
+    expect(state.inventory.spiritStones).toBe(stonesBefore + 38);
+    expect(state.story.foundationTrialCount).toBe(3);
+  });
   it('defines a distinct result for all six two-technique pairs', () => {
     const pairs = TECHNIQUE_COMBINATIONS.map((combination) => [...combination.techniqueIds].sort().join('+'));
     expect(TECHNIQUE_COMBINATIONS).toHaveLength(6);

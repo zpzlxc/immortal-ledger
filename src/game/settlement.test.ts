@@ -335,6 +335,40 @@ describe('settlement rules', () => {
     expect(ending.newEntries[0]?.title).toContain('替它写下一个名字');
   });
 
+  it('continues Lin Qiu\'s old ledger through two different well endings', () => {
+    for (const path of [
+      { firstChoice: 'copy-the-page', endingId: 'lin-qiu-open-witness', lastChoice: 'read-the-letters-aloud' },
+      { firstChoice: 'seal-the-page', endingId: 'lin-qiu-sealed-witness', lastChoice: 'leave-letters-at-the-well' },
+    ] as const) {
+      const state = createGame();
+      state.discoveredLocations = ['qingstone-mountain', 'blackwind-valley', 'nameless-well'];
+      state.social.completedPersonEventIds = ['lin-qiu-caravan', 'lin-qiu-ledger', 'nameless-well-soul'];
+      state.social.relationships['lin-qiu'].affinity = 20;
+      state.social.relationships['nameless-soul'].affinity = 0;
+
+      const blackwind = settleGame(
+        startAction(state, 'explore', now, 'blackwind-valley', undefined, () => 0.99),
+        now + 25 * MINUTE_MS,
+        () => 0.99,
+      );
+      expect(blackwind.state.social.pendingPersonEvent?.eventId).toBe('lin-qiu-seventh-page');
+
+      const first = resolvePersonEvent(blackwind.state, path.firstChoice, now + 25 * MINUTE_MS);
+      expect(first.error).toBeUndefined();
+      const well = settleGame(
+        startAction(first.state, 'explore', now + 25 * MINUTE_MS, 'nameless-well', undefined, () => 0.99),
+        now + 60 * MINUTE_MS,
+        () => 0.99,
+      );
+      expect(well.state.social.pendingPersonEvent?.eventId).toBe(path.endingId);
+
+      const ending = resolvePersonEvent(well.state, path.lastChoice, now + 60 * MINUTE_MS);
+      expect(ending.error).toBeUndefined();
+      expect(ending.state.social.completedPersonEventIds).toContain(path.endingId);
+      expect(ending.state.story.worldFlags).toContain(`person:${path.endingId}:${path.lastChoice}`);
+    }
+  });
+
   it('opens a different sect story after the first follow-up mission', () => {
     const cases = [
       { sectId: 'qingxiao-sword-sect' as const, missionId: 'qingxiao-patrol' as const, eventId: 'qingxiao-sword-trial' as const, choiceId: 'guard-the-sword-blank' },
@@ -668,6 +702,38 @@ describe('settlement rules', () => {
     expect(state.story.foundationTrialCount).toBe(3);
     expect(state.discoveredLocations).toContain('cloudbreak-ridge');
     expect(state.story.worldFlags).toContain('foundation-cloud-path-open');
+  });
+
+  it('plays the Cloudbreak chapters in order and records their different endings', () => {
+    let state = createGame();
+    state.character.realm.major = 'foundation_establishment';
+    state.story.foundationTrialCount = 3;
+    state.discoveredLocations.push('cloudbreak-ridge');
+    state.social.completedPersonEventIds = ['lin-qiu-caravan'];
+    const chapters = [
+      ['cloudbreak-stone-gate', 'carve-this-life'],
+      ['cloudbreak-missing-page', 'take-the-page'],
+      ['cloudbreak-ink-river', 'tell-the-truth'],
+      ['cloudbreak-last-margin', 'leave-a-road'],
+    ] as const;
+
+    for (const [index, [eventId, choiceId]] of chapters.entries()) {
+      const startedAt = now + index * 45 * MINUTE_MS;
+      const explored = settleGame(
+        startAction(state, 'explore', startedAt, 'cloudbreak-ridge', undefined, () => 0.99),
+        startedAt + 45 * MINUTE_MS,
+        () => 0.99,
+      );
+      expect(explored.state.pendingExplorationEvent?.eventId).toBe(eventId);
+      const resolved = resolveExplorationEvent(explored.state, choiceId, startedAt + 45 * MINUTE_MS);
+      expect(resolved.error).toBeUndefined();
+      expect(resolved.state.story.choiceHistory.at(-1)).toMatchObject({ eventId, choiceId });
+      state = resolved.state;
+    }
+
+    expect(state.completedExplorationEventIds).toEqual(expect.arrayContaining(chapters.map(([id]) => id)));
+    expect(state.story.worldFlags).toContain('exploration:cloudbreak-last-margin:leave-a-road');
+    expect(state.pendingExplorationEvent).toBeNull();
   });
 
   it('unlocks one auxiliary technique at foundation with a fragment cost', () => {

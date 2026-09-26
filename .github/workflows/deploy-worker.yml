@@ -28,6 +28,7 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      WORKER_URL: ${{ vars.CLOUDFLARE_WORKER_URL || 'https://immortal-ledger.zpzlxc.workers.dev' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -52,3 +53,6 @@ jobs:
 
       - name: Build and deploy Worker
         run: npm run worker:deploy
+
+      - name: Verify deployed Worker
+        run: curl --fail --silent --show-error --retry 5 --retry-delay 3 "$WORKER_URL/api/health"

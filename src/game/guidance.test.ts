@@ -13,7 +13,7 @@ describe('journey guidance', () => {
   it('prioritizes a cultivation gate over onboarding', () => {
     const game = createNewGame('沈砚', []);
     game.character.realm.cultivation = game.character.realm.cultivationRequired;
-    expect(getJourneyGuidance(game).tab).toBe('cultivation');
+    expect(getJourneyGuidance(game).tab).toBe('realm');
   });
   it('shows collectable cave production while an action runs', () => {
     const game = startAction(createNewGame('沈砚', []), 'meditate', Date.now());
